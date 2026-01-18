@@ -3,6 +3,7 @@ import path from 'path';
 import { loadGlobalConfig, type GlobalConfig } from './config-manager.js';
 import { loadProjectState, type PhaseState, type ProjectState } from './state-manager.js';
 import { getProjectPhasesDir } from './config-manager.js';
+import { getLibraryDocs, detectProjectLibraries } from './docs-provider.js';
 
 export interface GeneratedPrompt {
   model: 'planning' | 'execution';
@@ -367,8 +368,17 @@ ${phase.validation_criteria.map(c => `- [ ] ${c}`).join('\n')}
 
 `;
 
-  // Context7 libraries to look up for this phase
+  // Get documentation for libraries used in this phase
   const context7Libraries = phase.context7_libraries || [];
+  
+  // Detect project libraries and include relevant docs
+  const projectLibraries = await detectProjectLibraries();
+  const allLibraries = [...new Set([...context7Libraries, ...projectLibraries])];
+  
+  if (allLibraries.length > 0) {
+    const docs = getLibraryDocs(allLibraries);
+    prompt += docs + '\n\n';
+  }
 
   // Mandatory design constraints
   prompt += `## MANDATORY Constraints

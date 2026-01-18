@@ -26,6 +26,14 @@ import {
   hasRemote,
 } from '../../core/git-integration.js';
 import {
+  runPreflightChecks,
+  displayPreflightResults,
+} from '../../core/preflight-checks.js';
+import {
+  attemptAutoFix,
+  displayAutoFixResults,
+} from '../../core/auto-fix.js';
+import {
   runCursorAgent,
   isCursorCliInstalled,
   isCursorCliAuthenticated,
@@ -116,6 +124,20 @@ export async function runCommand(options: RunOptions): Promise<void> {
     console.log(chalk.dim('Use --auto to force re-run, or continue to next phase:\n'));
     console.log(chalk.cyan(`  ai-phases run --phase ${phaseNumber + 1}\n`));
     return;
+  }
+  
+  // Run pre-flight checks for phases after Phase 1
+  if (phaseNumber > 1) {
+    const preflightResult = await runPreflightChecks(phaseNumber, globalConfig.defaults.ui_library);
+    displayPreflightResults(preflightResult);
+    
+    if (!preflightResult.passed) {
+      console.log(chalk.red('\n⛔ Pre-flight checks failed. Fix the issues above before running this phase.\n'));
+      if (isAutoMode) {
+        throw new Error('Pre-flight checks failed');
+      }
+      process.exit(1);
+    }
   }
   
   // Load previous handover if exists
@@ -245,34 +267,61 @@ async function handlePhaseCompleted(
     // Run validation commands if any exist
     if (phase?.validation_commands && phase.validation_commands.length > 0) {
       spinner.text = 'Running validation checks...';
-      const validationResult = await runValidationCommands(phase.validation_commands);
+      let validationResult = await runValidationCommands(phase.validation_commands);
       
       if (!validationResult.success) {
-        spinner.fail('Validation failed');
-        console.log(chalk.red('\n━━━ Validation Failed ━━━\n'));
-        console.log(chalk.dim('Failed commands:'));
-        validationResult.failures.forEach(f => {
-          console.log(chalk.red(`  ✗ ${f.command}`));
-          if (f.error) {
-            console.log(chalk.dim(`    ${f.error.split('\n')[0]}`));
-          }
-        });
+        spinner.warn('Validation failed - attempting auto-fix...');
         
-        // Mark as failed due to validation with detailed error context
-        const errorDetails = validationResult.failures.map(f => `- ${f.command}: ${f.error}`).join('\n');
-        await markAttemptFailed(
-          phaseNumber,
-          attemptNumber,
-          `Validation commands failed:\n${errorDetails}`,
-          `Review the error output above and fix the specific issues before retrying.`
-        );
+        // Attempt auto-fix for failed validations
+        const errorOutput = validationResult.failures.map(f => f.error || '').join('\n');
+        const autoFixResult = await attemptAutoFix(errorOutput);
         
-        const remainingAttempts = (phase?.max_attempts || 3) - attemptNumber;
-        if (remainingAttempts > 0) {
-          console.log(chalk.yellow(`\n⚠️  ${remainingAttempts} attempt(s) remaining. Retry with:`));
-          console.log(chalk.cyan(`  ai-phases run --phase ${phaseNumber}\n`));
+        if (autoFixResult.fixed) {
+          displayAutoFixResults(autoFixResult);
+          
+          // Re-run validation after auto-fixes
+          console.log(chalk.cyan('\n  Re-running validation after auto-fixes...\n'));
+          validationResult = await runValidationCommands(phase.validation_commands);
         }
-        return;
+        
+        if (!validationResult.success) {
+          spinner.fail('Validation failed');
+          console.log(chalk.red('\n━━━ Validation Failed ━━━\n'));
+          console.log(chalk.dim('Failed commands:'));
+          validationResult.failures.forEach(f => {
+            console.log(chalk.red(`  ✗ ${f.command}`));
+            if (f.error) {
+              console.log(chalk.dim(`    ${f.error.split('\n')[0]}`));
+            }
+          });
+          
+          // Show auto-fix suggestions if not already shown
+          if (!autoFixResult.fixed && autoFixResult.suggestions.length > 0) {
+            displayAutoFixResults(autoFixResult);
+          }
+          
+          // Mark as failed due to validation with detailed error context
+          const errorDetails = validationResult.failures.map(f => `- ${f.command}: ${f.error}`).join('\n');
+          const suggestions = autoFixResult.suggestions.length > 0 
+            ? `\n\nSuggested fixes:\n${autoFixResult.suggestions.map(s => `- ${s}`).join('\n')}`
+            : '';
+          
+          await markAttemptFailed(
+            phaseNumber,
+            attemptNumber,
+            `Validation commands failed:\n${errorDetails}`,
+            `Review the error output above and fix the specific issues before retrying.${suggestions}`
+          );
+          
+          const remainingAttempts = (phase?.max_attempts || 3) - attemptNumber;
+          if (remainingAttempts > 0) {
+            console.log(chalk.yellow(`\n⚠️  ${remainingAttempts} attempt(s) remaining. Retry with:`));
+            console.log(chalk.cyan(`  ai-phases run --phase ${phaseNumber}\n`));
+          }
+          return;
+        }
+        
+        console.log(chalk.green('✓ Validation passed after auto-fixes!'));
       }
       
       spinner.text = 'Validation passed, completing phase...';
