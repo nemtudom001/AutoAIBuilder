@@ -1,0 +1,49 @@
+{
+  "name": "ai-phase-builder",
+  "version": "1.0.0",
+  "description": "AI-powered project phase orchestration for Cursor IDE",
+  "main": "dist/index.js",
+  "bin": {
+    "ai-phases": "./dist/cli/index.js"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc -w",
+    "start": "node dist/cli/index.js",
+    "lint": "eslint src --ext .ts",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "ai",
+    "cursor",
+    "coding",
+    "phases",
+    "orchestration",
+    "cli"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "fs-extra": "^11.2.0",
+    "inquirer": "^9.2.23",
+    "ora": "^8.0.1",
+    "boxen": "^7.1.1",
+    "cli-table3": "^0.6.5"
+  },
+  "devDependencies": {
+    "@types/fs-extra": "^11.0.4",
+    "@types/inquirer": "^9.0.7",
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "dist",
+    "templates"
+  ]
+}
