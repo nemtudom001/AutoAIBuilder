@@ -3,6 +3,7 @@ import path from 'path';
 import chalk from 'chalk';
 import ora from 'ora';
 import boxen from 'boxen';
+import inquirer from 'inquirer';
 import { loadGlobalConfig, getProjectPhasesDir } from '../../core/config-manager.js';
 import {
   loadProjectState,
@@ -12,10 +13,12 @@ import {
   createNewAttempt,
   markAttemptCompleted,
   markAttemptFailed,
+  loadAttemptState,
 } from '../../core/state-manager.js';
 import {
   generatePhaseExecutionPrompt,
   generateErrorFixPrompt,
+  generateDeepAnalysisPrompt,
   buildCursorPrompt,
   savePromptToFile,
 } from '../../core/prompt-builder.js';
@@ -48,12 +51,17 @@ const execAsync = promisify(exec);
 // Maximum number of AI fix attempts per validation failure
 const MAX_AI_FIX_ATTEMPTS = 2;
 
+// Default max attempts before asking user
+const DEFAULT_MAX_ATTEMPTS = 3;
+
 interface RunOptions {
   phase?: string;
   dryRun?: boolean;
   auto?: boolean;
   isRetry?: boolean; // Internal flag for retry attempts
   errorContext?: string; // Error context from previous attempt
+  consecutiveErrors?: number; // Track consecutive errors for enhanced context
+  modelOverride?: string; // Allow model override for retries
 }
 
 export async function runCommand(options: RunOptions): Promise<void> {
@@ -154,13 +162,32 @@ export async function runCommand(options: RunOptions): Promise<void> {
     }
   }
   
-  // Generate prompt with error context if this is a retry
+  // Check if this is the last phase
+  const isLastPhase = phaseNumber === state.total_phases;
+  
+  // Generate prompt with error context and options
   const errorContext = options.isRetry ? options.errorContext : undefined;
-  const prompt = await generatePhaseExecutionPrompt(phase, previousHandover, errorContext);
+  const consecutiveErrors = options.consecutiveErrors || 0;
+  const prompt = await generatePhaseExecutionPrompt(phase, previousHandover, errorContext, {
+    consecutiveErrors,
+    modelOverride: options.modelOverride,
+    isLastPhase,
+  });
   
   // Log retry context if applicable
   if (options.isRetry) {
-    console.log(chalk.yellow('\n🔄 RETRY MODE: Starting fresh AI context with error information from previous attempt.\n'));
+    if (consecutiveErrors >= 2) {
+      console.log(chalk.yellow('\n🔍 ENHANCED ANALYSIS MODE: Multiple errors detected. Loading comprehensive context...\n'));
+    } else {
+      console.log(chalk.yellow('\n🔄 RETRY MODE: Starting fresh AI context with error information from previous attempt.\n'));
+    }
+  }
+  
+  // Log if using different model
+  if (options.modelOverride) {
+    console.log(chalk.cyan(`📊 Using model override: ${options.modelOverride}\n`));
+  } else if (isLastPhase) {
+    console.log(chalk.cyan('🎯 FINAL PHASE: Using Opus model for quality and polish\n'));
   }
   
   // Display phase info
@@ -278,9 +305,8 @@ export async function runCommand(options: RunOptions): Promise<void> {
         console.log(chalk.yellow(`\n⚠️  ${remainingAttempts} attempt(s) remaining. Retry with:`));
         console.log(chalk.cyan(`  ai-phases run --phase ${phaseNumber}\n`));
       } else {
-        console.log(chalk.red(`\n⛔ Phase ${phaseNumber} BLOCKED - all ${phase.max_attempts} attempts exhausted.\n`));
-        console.log(chalk.dim('Manual intervention required. Review the failure reports in:'));
-        console.log(chalk.cyan(`  ${path.join(getProjectPhasesDir(), 'phases', `phase-${phaseNumber}`)}\n`));
+        // All attempts exhausted - prompt user for options
+        await handleMaxAttemptsReached(phaseNumber, phase, completionResult.errorContext || '');
       }
     }
   } else {
@@ -293,7 +319,13 @@ export async function runCommand(options: RunOptions): Promise<void> {
       await commitPartialProgress(phaseNumber, attempt.attempt_number, 'failed-execution');
     }
     
+    // Write detailed error report
+    await writeDetailedErrorReport(phaseNumber, attempt.attempt_number, result.error || 'Unknown error', result.output);
+    
     await handlePhaseFailed(phaseNumber, attempt.attempt_number, phase.max_attempts, result.error || 'Unknown error');
+    
+    // Track consecutive errors
+    const consecutiveErrors = (options.consecutiveErrors || 0) + 1;
     
     // If in auto mode and we have retries left, try again with fresh context
     // Reload phase to check if it was blocked by handlePhaseFailed
@@ -301,15 +333,24 @@ export async function runCommand(options: RunOptions): Promise<void> {
     if (updatedPhase && updatedPhase.status !== 'blocked') {
       const remainingAttempts = phase.max_attempts - attempt.attempt_number;
       if (remainingAttempts > 0 && isAutoMode) {
-        console.log(chalk.yellow(`\n🔧 Auto-mode: Retrying with fresh AI context...\n`));
+        // On third consecutive error, use enhanced context
+        if (consecutiveErrors >= 2) {
+          console.log(chalk.yellow(`\n🔍 Multiple consecutive errors detected - using enhanced analysis...\n`));
+        } else {
+          console.log(chalk.yellow(`\n🔧 Auto-mode: Retrying with fresh AI context...\n`));
+        }
         console.log(chalk.dim('  Previous context cleared. Error information will inform new session.\n'));
         await runCommand({ 
           phase: String(phaseNumber), 
           auto: true, 
           isRetry: true,
-          errorContext: result.error || 'Unknown execution error' 
+          errorContext: result.error || 'Unknown execution error',
+          consecutiveErrors,
         });
       }
+    } else if (updatedPhase?.status === 'blocked') {
+      // All attempts exhausted - prompt user for options
+      await handleMaxAttemptsReached(phaseNumber, phase, result.error || 'Unknown error');
     }
   }
 }
@@ -601,7 +642,224 @@ ${errorMessage}
 }
 
 /**
- * Auto-generate a handover summary from the phase output
+ * Write a detailed error report to help AI analyze and fix issues
+ */
+async function writeDetailedErrorReport(
+  phaseNumber: number,
+  attemptNumber: number,
+  errorMessage: string,
+  fullOutput: string
+): Promise<void> {
+  const phase = await loadPhaseState(phaseNumber);
+  const phasesDir = getProjectPhasesDir();
+  
+  // Collect all previous attempt errors for pattern analysis
+  const previousErrors: string[] = [];
+  for (let i = 1; i < attemptNumber; i++) {
+    const prevAttempt = await loadAttemptState(phaseNumber, i);
+    if (prevAttempt?.error_summary) {
+      previousErrors.push(`Attempt ${i}: ${prevAttempt.error_summary}`);
+    }
+  }
+  
+  // Get git diff to show what changed
+  let gitDiff = '';
+  try {
+    const { stdout } = await execAsync('git diff HEAD~1 --stat', { cwd: process.cwd() });
+    gitDiff = stdout;
+  } catch {
+    gitDiff = 'Unable to get git diff';
+  }
+  
+  const errorReportPath = path.join(
+    phasesDir,
+    'phases',
+    `phase-${phaseNumber}`,
+    `attempt-${attemptNumber}`,
+    'detailed-error-report.md'
+  );
+  
+  const report = `# Detailed Error Report - Phase ${phaseNumber}, Attempt ${attemptNumber}
+
+## Error Summary
+${errorMessage}
+
+## Phase Context
+- **Phase Name**: ${phase?.name || 'Unknown'}
+- **Phase Description**: ${phase?.description || 'Unknown'}
+- **Attempt Number**: ${attemptNumber} of ${phase?.max_attempts || 3}
+
+## Tasks Being Attempted
+${phase?.tasks.map((t, i) => `${i + 1}. ${t.description} (${t.status})`).join('\n') || 'Unknown'}
+
+## Validation Commands That Should Pass
+${phase?.validation_commands?.map(c => `- \`${c}\``).join('\n') || 'None specified'}
+
+## Previous Attempt Errors (Pattern Analysis)
+${previousErrors.length > 0 ? previousErrors.join('\n\n') : 'This is the first attempt'}
+
+## Recent File Changes
+\`\`\`
+${gitDiff}
+\`\`\`
+
+## Full Error Output (Last 200 lines)
+\`\`\`
+${fullOutput.split('\n').slice(-200).join('\n')}
+\`\`\`
+
+## Recommended Investigation Steps
+1. Check if the error is a TypeScript/compilation error - look for specific file:line references
+2. Check if it's a missing dependency - look for "Cannot find module" or "Module not found"
+3. Check if it's a runtime error - look for stack traces
+4. Compare with previous attempt errors to identify patterns
+5. Review the git diff to see what changes might have caused the issue
+
+## Key Questions for AI Analysis
+- Is this error similar to previous attempts? If so, what's different this time?
+- What specific file and line is causing the issue?
+- Is there a pattern in the errors that suggests a root cause?
+- What minimal change would fix this specific error?
+`;
+
+  await fs.ensureDir(path.dirname(errorReportPath));
+  await fs.writeFile(errorReportPath, report);
+  console.log(chalk.dim(`Detailed error report saved: ${errorReportPath}`));
+}
+
+/**
+ * Handle when max attempts are reached - prompt user for options
+ */
+async function handleMaxAttemptsReached(
+  phaseNumber: number,
+  phase: any,
+  lastError: string
+): Promise<void> {
+  console.log(chalk.red(`\n⛔ Phase ${phaseNumber} BLOCKED - all ${phase.max_attempts} attempts exhausted.\n`));
+  console.log(chalk.dim('The AI was unable to complete this phase after multiple attempts.\n'));
+  
+  // Show error summary
+  console.log(chalk.yellow('Last Error:'));
+  console.log(chalk.dim(lastError.split('\n').slice(0, 5).join('\n')));
+  console.log();
+  
+  // Prompt user for what to do
+  const { action } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'action',
+      message: 'What would you like to do?',
+      choices: [
+        { name: '🔄 Add more retry attempts', value: 'retry' },
+        { name: '🧠 Switch model and retry (Opus for deeper analysis)', value: 'switch_model' },
+        { name: '📋 View detailed error reports', value: 'view_errors' },
+        { name: '⏪ Rollback to before this phase', value: 'rollback' },
+        { name: '🛑 Exit and fix manually', value: 'exit' },
+      ],
+    },
+  ]);
+  
+  switch (action) {
+    case 'retry': {
+      const { additionalAttempts } = await inquirer.prompt([
+        {
+          type: 'number',
+          name: 'additionalAttempts',
+          message: 'How many additional attempts?',
+          default: 3,
+          validate: (input) => input > 0 && input <= 10 ? true : 'Please enter a number between 1 and 10',
+        },
+      ]);
+      
+      // Update phase max_attempts and reset status
+      await updatePhaseState(phaseNumber, { 
+        max_attempts: phase.max_attempts + additionalAttempts,
+        status: 'failed', // Reset from blocked to allow retries
+      });
+      
+      console.log(chalk.green(`\n✓ Added ${additionalAttempts} more attempts. Continuing...\n`));
+      
+      // Continue with retry
+      await runCommand({ 
+        phase: String(phaseNumber), 
+        auto: true, 
+        isRetry: true,
+        errorContext: lastError,
+        consecutiveErrors: 2, // Trigger enhanced analysis
+      });
+      break;
+    }
+    
+    case 'switch_model': {
+      const { model } = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'model',
+          message: 'Select model for retry:',
+          choices: [
+            { name: 'Claude Opus 4.5 (deeper analysis, slower)', value: 'claude-sonnet-4-20250514' },
+            { name: 'Gemini 2.5 Flash (faster)', value: 'gemini-2.5-flash' },
+          ],
+        },
+      ]);
+      
+      const { additionalAttempts } = await inquirer.prompt([
+        {
+          type: 'number',
+          name: 'additionalAttempts',
+          message: 'How many additional attempts with this model?',
+          default: 2,
+          validate: (input) => input > 0 && input <= 10 ? true : 'Please enter a number between 1 and 10',
+        },
+      ]);
+      
+      // Update phase and reset status
+      await updatePhaseState(phaseNumber, { 
+        max_attempts: phase.max_attempts + additionalAttempts,
+        status: 'failed',
+      });
+      
+      console.log(chalk.green(`\n✓ Switching to ${model} with ${additionalAttempts} more attempts...\n`));
+      
+      await runCommand({ 
+        phase: String(phaseNumber), 
+        auto: true, 
+        isRetry: true,
+        errorContext: lastError,
+        consecutiveErrors: 2,
+        modelOverride: model,
+      });
+      break;
+    }
+    
+    case 'view_errors': {
+      const phasesDir = getProjectPhasesDir();
+      const phaseDir = path.join(phasesDir, 'phases', `phase-${phaseNumber}`);
+      console.log(chalk.cyan(`\nError reports are in: ${phaseDir}`));
+      console.log(chalk.dim('Look for detailed-error-report.md in each attempt folder.\n'));
+      
+      // Recursively call to let user choose again
+      await handleMaxAttemptsReached(phaseNumber, phase, lastError);
+      break;
+    }
+    
+    case 'rollback': {
+      console.log(chalk.yellow('\nTo rollback, run:'));
+      console.log(chalk.cyan(`  ai-phases rollback --phase ${phaseNumber}\n`));
+      break;
+    }
+    
+    case 'exit':
+    default:
+      console.log(chalk.dim('\nExiting. Fix the issues manually and run:'));
+      console.log(chalk.cyan(`  ai-phases run --phase ${phaseNumber}\n`));
+      break;
+  }
+}
+
+/**
+ * Auto-generate a COMPREHENSIVE handover summary from the phase output
+ * This is CRITICAL - handovers must contain all important details for the next phase
  */
 async function generateAutoHandover(
   phaseNumber: number,
@@ -609,36 +867,93 @@ async function generateAutoHandover(
   filesModified: string[]
 ): Promise<void> {
   const { runPlanningTask, extractMarkdown } = await import('../../core/cursor-cli.js');
+  const state = await loadProjectState();
+  const phase = state?.phases.find(p => p.phase_number === phaseNumber);
   
-  const handoverPrompt = `Based on the following phase completion output, generate a concise handover summary for the next phase.
+  // Get the actual file contents for key files (first 50 lines each)
+  const fileSnippets: string[] = [];
+  for (const file of filesModified.slice(0, 5)) {
+    try {
+      const content = await fs.readFile(file, 'utf-8');
+      const lines = content.split('\n').slice(0, 30).join('\n');
+      fileSnippets.push(`### ${file}\n\`\`\`\n${lines}\n...\n\`\`\``);
+    } catch {
+      // File might not exist or be binary
+    }
+  }
+  
+  const handoverPrompt = `You MUST generate a COMPREHENSIVE handover document for Phase ${phaseNumber}.
 
-## Phase ${phaseNumber} Output
-${output.substring(0, 4000)}${output.length > 4000 ? '\n...(truncated)' : ''}
+This handover is CRITICAL - it is the ONLY context the next AI agent will have about what was built.
+If you skip details, the next phase WILL FAIL because the AI won't know what exists.
+
+## Phase ${phaseNumber} Information
+- **Name**: ${phase?.name || 'Unknown'}
+- **Description**: ${phase?.description || 'Unknown'}
+- **Tasks Completed**: 
+${phase?.tasks.map(t => `  - ${t.description}`).join('\n') || 'Unknown'}
+
+## Phase Output (What the AI did)
+${output.substring(0, 6000)}${output.length > 6000 ? '\n...(truncated)' : ''}
 
 ## Files Modified
 ${filesModified.map(f => `- ${f}`).join('\n')}
 
-Generate a handover in this format:
+## Key File Contents (for reference)
+${fileSnippets.join('\n\n')}
 
-# Handover - Phase ${phaseNumber}
+---
 
-## Completed Work
-- [Brief bullet points]
+## MANDATORY OUTPUT FORMAT - Follow this EXACTLY:
 
-## Key Files
-| File | Purpose |
-|------|---------|
-| file | what it does |
+# Handover - Phase ${phaseNumber}: ${phase?.name || 'Unknown'}
 
-## Context for Next Phase
-- [Important information for the next developer/AI]
+## ✅ What Was Completed
+[List EVERY feature/component that was built - be specific with names and locations]
+- Feature 1: Description and where it lives
+- Feature 2: Description and where it lives
+- etc.
 
-Keep it concise (under 500 words). Focus on what the next phase needs to know.`;
+## 📁 Key Files Created/Modified
+| File Path | Purpose | Key Exports/Components |
+|-----------|---------|----------------------|
+| path/to/file | what it does | Button, Card, etc |
+
+## 🔧 Technical Decisions Made
+[Document any important decisions about architecture, libraries used, patterns followed]
+- Decision 1: Why and what
+- Decision 2: Why and what
+
+## ⚠️ Important Notes for Next Phase
+[Things the next AI MUST know to avoid breaking things]
+- Note 1
+- Note 2
+
+## 🔗 Dependencies & Integrations
+[What libraries were installed, what APIs are being used]
+- Library: version - what for
+- API: endpoint - what for
+
+## 📋 What Validation Passed
+${phase?.validation_criteria.map(c => `- ✓ ${c}`).join('\n') || 'None specified'}
+
+## 🎯 Suggested Focus for Next Phase
+[Based on what was built, what should the next phase focus on or be careful about]
+
+---
+
+IMPORTANT RULES:
+1. Be SPECIFIC - use actual file names, component names, function names
+2. Do NOT be vague like "some components were created" - say WHICH components
+3. Include code snippets if they help explain a pattern
+4. Err on the side of MORE detail, not less
+5. This document should allow someone with NO context to understand what exists`;
 
   try {
+    // Use planning model for better quality handovers
     const result = await runPlanningTask(handoverPrompt);
     
-    if (result.success) {
+    if (result.success && result.output.trim().length > 100) {
       const handoverContent = extractMarkdown(result.output);
       const handoverPath = path.join(
         getProjectPhasesDir(),
@@ -647,12 +962,78 @@ Keep it concise (under 500 words). Focus on what the next phase needs to know.`;
         'handover.md'
       );
       await fs.writeFile(handoverPath, handoverContent);
-      console.log(chalk.green('✓ Handover generated: ') + chalk.dim(handoverPath));
+      console.log(chalk.green('✓ Comprehensive handover generated: ') + chalk.dim(handoverPath));
+    } else {
+      // Fallback - generate a basic handover from available info
+      console.log(chalk.yellow('⚠️  AI handover generation incomplete, creating fallback...'));
+      await generateFallbackHandover(phaseNumber, phase, filesModified, output);
     }
-  } catch {
-    // Handover generation is optional, don't fail the phase
-    console.log(chalk.dim('Handover generation skipped (optional)'));
+  } catch (error) {
+    // Fallback to basic handover if AI generation fails
+    console.log(chalk.yellow('⚠️  AI handover generation failed, creating fallback...'));
+    await generateFallbackHandover(phaseNumber, phase, filesModified, output);
   }
+}
+
+/**
+ * Generate a fallback handover when AI generation fails
+ * This ensures we ALWAYS have a handover document
+ */
+async function generateFallbackHandover(
+  phaseNumber: number,
+  phase: any,
+  filesModified: string[],
+  output: string
+): Promise<void> {
+  const handoverPath = path.join(
+    getProjectPhasesDir(),
+    'phases',
+    `phase-${phaseNumber}`,
+    'handover.md'
+  );
+  
+  // Extract key info from output
+  const outputLines = output.split('\n');
+  const createdFiles = outputLines.filter(l => l.includes('Created') || l.includes('created')).slice(0, 10);
+  const modifiedFiles = outputLines.filter(l => l.includes('Modified') || l.includes('modified')).slice(0, 10);
+  
+  const fallbackContent = `# Handover - Phase ${phaseNumber}: ${phase?.name || 'Unknown'}
+
+## ⚠️ Auto-Generated Fallback Handover
+This handover was auto-generated because the AI handover generation failed.
+Please review and enhance if needed.
+
+## ✅ Phase Information
+- **Phase**: ${phaseNumber}
+- **Name**: ${phase?.name || 'Unknown'}
+- **Description**: ${phase?.description || 'Unknown'}
+
+## 📋 Tasks That Were Attempted
+${phase?.tasks.map((t: any, i: number) => `${i + 1}. ${t.description}`).join('\n') || 'Unknown'}
+
+## 📁 Files Modified
+${filesModified.map(f => `- \`${f}\``).join('\n') || 'No files recorded'}
+
+## 📝 Creation/Modification Mentions in Output
+${createdFiles.concat(modifiedFiles).map(l => `- ${l.trim()}`).join('\n') || 'None detected'}
+
+## ✓ Validation Criteria
+${phase?.validation_criteria?.map((c: string) => `- ${c}`).join('\n') || 'None specified'}
+
+## ⚠️ Important for Next Phase
+- Review the files listed above before making changes
+- Check imports and dependencies are correct
+- Verify the validation commands still pass
+
+## 📊 Raw Output Summary (First 50 lines)
+\`\`\`
+${outputLines.slice(0, 50).join('\n')}
+\`\`\`
+`;
+
+  await fs.ensureDir(path.dirname(handoverPath));
+  await fs.writeFile(handoverPath, fallbackContent);
+  console.log(chalk.green('✓ Fallback handover created: ') + chalk.dim(handoverPath));
 }
 
 interface ValidationResult {

@@ -315,6 +315,14 @@ npm run lint
   };
 }
 
+export interface PhaseExecutionOptions {
+  previousHandover?: string;
+  errorContext?: string;
+  consecutiveErrors?: number;
+  modelOverride?: string;
+  isLastPhase?: boolean;
+}
+
 /**
  * Generate prompt for executing a specific phase
  * 
@@ -324,14 +332,23 @@ npm run lint
  * - Full project spec and research findings are NOT included
  * - This keeps prompts efficient and focused
  * - Each phase runs in a FRESH cursor-agent session for context isolation
+ * 
+ * SPECIAL CASES:
+ * - Last phase: Uses Opus model for deep analysis and polish
+ * - 3+ consecutive errors: Loads all handovers for comprehensive analysis
  */
 export async function generatePhaseExecutionPrompt(
   phase: PhaseState,
   previousHandover?: string,
-  errorContext?: string // Optional error context from failed attempt
+  errorContext?: string,
+  options?: PhaseExecutionOptions
 ): Promise<GeneratedPrompt> {
   const config = await loadGlobalConfig();
   if (!config) throw new Error('No global config found');
+
+  const consecutiveErrors = options?.consecutiveErrors || 0;
+  const isLastPhase = options?.isLastPhase || false;
+  const modelOverride = options?.modelOverride;
 
   // NOTE: We intentionally DO NOT load the full project state here
   // Each phase should work from handover context only, not the full spec
@@ -341,11 +358,33 @@ export async function generatePhaseExecutionPrompt(
 ## ⚡ FRESH CONTEXT - NEW SESSION
 This is a new AI session with fresh context. Previous conversation history is NOT available.
 All context you need is provided in this prompt.
+${isLastPhase ? '\n**🎯 FINAL PHASE** - This is the last phase. Focus on quality, polish, and thorough testing.' : ''}
 
 ## Phase Context
 ${phase.description}
 
 `;
+
+  // Enhanced analysis for multiple consecutive errors
+  if (consecutiveErrors >= 2) {
+    prompt += `## 🔍 ENHANCED ANALYSIS MODE
+Multiple consecutive errors have occurred. You must:
+1. **Analyze deeply** - Don't just try quick fixes
+2. **Check all previous handovers** for context that might help
+3. **Look for root causes** - The issue may stem from earlier phases
+4. **Consider rollback** if the approach is fundamentally flawed
+
+`;
+
+    // Load ALL previous handovers for comprehensive context
+    const allHandovers = await loadAllPreviousHandovers(phase.phase_number);
+    if (allHandovers.length > 0) {
+      prompt += `## 📚 All Previous Phase Handovers (for deep analysis)
+${allHandovers.map(h => `### Phase ${h.phase}\n${summarizeForContext(h.content, 30)}`).join('\n\n')}
+
+`;
+    }
+  }
 
   // Add error context if this is a retry
   if (errorContext) {
@@ -355,6 +394,7 @@ The previous attempt at this phase failed with these errors:
 ${errorContext}
 
 **You MUST fix these specific issues in this attempt.**
+${consecutiveErrors >= 2 ? '\n**DEEP ANALYSIS REQUIRED**: This error has persisted. Look for root causes, not surface fixes.' : ''}
 
 `;
   }
@@ -470,12 +510,123 @@ ${summarizeForContext(failureReport)}
     }
   }
 
+  // Determine model to use:
+  // 1. Model override from user (e.g., switched to Opus after failures)
+  // 2. Last phase always uses planning model (Opus) for quality/polish
+  // 3. Otherwise use execution model (Flash)
+  let modelToUse = config.cursor.execution_model;
+  let modelType: 'planning' | 'execution' = 'execution';
+  
+  if (modelOverride) {
+    modelToUse = modelOverride;
+    modelType = modelOverride.includes('opus') || modelOverride.includes('sonnet') ? 'planning' : 'execution';
+  } else if (isLastPhase) {
+    modelToUse = config.cursor.planning_model;
+    modelType = 'planning';
+    prompt += `## 🎯 FINAL PHASE QUALITY CHECK
+This is the **last phase**. Before completing:
+1. Run ALL validation commands and ensure they pass
+2. Check for any console errors or warnings
+3. Review the UI for polish and consistency
+4. Ensure all features from previous phases still work
+5. Add any finishing touches for a polished result
+
+`;
+  }
+
   return {
-    model: 'execution',
-    modelName: config.cursor.execution_model,
+    model: modelType,
+    modelName: modelToUse,
     stage: `Phase ${phase.phase_number} Execution`,
     prompt,
     context7Lookups: context7Libraries,
+  };
+}
+
+/**
+ * Load all previous handovers for deep analysis
+ */
+async function loadAllPreviousHandovers(currentPhase: number): Promise<Array<{ phase: number; content: string }>> {
+  const handovers: Array<{ phase: number; content: string }> = [];
+  const phasesDir = getProjectPhasesDir();
+  
+  for (let i = 1; i < currentPhase; i++) {
+    const handoverPath = path.join(phasesDir, 'phases', `phase-${i}`, 'handover.md');
+    try {
+      if (await fs.pathExists(handoverPath)) {
+        const content = await fs.readFile(handoverPath, 'utf-8');
+        handovers.push({ phase: i, content });
+      }
+    } catch {
+      // Skip if can't read
+    }
+  }
+  
+  return handovers;
+}
+
+/**
+ * Generate a deep analysis prompt for persistent errors
+ * This loads more context and asks for thorough investigation
+ */
+export async function generateDeepAnalysisPrompt(
+  phase: PhaseState,
+  errorHistory: string[],
+  allHandovers: string[]
+): Promise<GeneratedPrompt> {
+  const config = await loadGlobalConfig();
+  if (!config) throw new Error('No global config found');
+
+  const prompt = `# 🔬 DEEP ANALYSIS REQUIRED - Phase ${phase.phase_number}: ${phase.name}
+
+## Critical Situation
+This phase has failed multiple times. We need a thorough analysis before attempting again.
+
+## Error History (All Attempts)
+${errorHistory.map((e, i) => `### Attempt ${i + 1}\n${e}`).join('\n\n')}
+
+## All Previous Phase Handovers
+${allHandovers.map((h, i) => `### Phase ${i + 1}\n${summarizeForContext(h, 40)}`).join('\n\n')}
+
+## Your Analysis Task
+
+1. **Pattern Recognition**: What patterns do you see in the errors? Are they related?
+
+2. **Root Cause Analysis**: What is the FUNDAMENTAL issue? Don't look at symptoms.
+
+3. **Previous Phase Impact**: Could something from a previous phase be causing this?
+
+4. **Architecture Review**: Is there a design flaw that needs addressing?
+
+5. **Proposed Solution**: Based on your analysis, what specific changes would fix this?
+
+## Output Format
+
+Provide your analysis as:
+
+### 🔍 Error Pattern
+[What you noticed about the errors]
+
+### 🎯 Root Cause
+[The fundamental issue]
+
+### 🔗 Dependencies
+[Any issues from previous phases]
+
+### ✅ Recommended Fix
+[Specific, actionable steps]
+
+### ⚠️ Risks
+[What could go wrong with the fix]
+
+Be thorough. This analysis will determine the next approach.
+`;
+
+  return {
+    model: 'planning',
+    modelName: config.cursor.planning_model,
+    stage: `Phase ${phase.phase_number} Deep Analysis`,
+    prompt,
   };
 }
 
