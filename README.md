@@ -185,14 +185,19 @@ cursor-agent login
 
 </details>
 
-### Step 4: Run Setup
+### Step 4: Create Your First Project
 
 ```bash
-ai-phases config --setup
+# Create project folder
+mkdir my-project && cd my-project
+
+# Initialize (runs setup wizard on first use)
+ai-phases init
 ```
 
-This interactive wizard will:
+On first run, `init` will automatically:
 - Verify your Cursor CLI installation
+- Check GitHub CLI authentication
 - Configure your preferences (UI library, design system)
 - Set up automation options (auto-run, auto-commit, auto-push)
 
@@ -200,22 +205,26 @@ This interactive wizard will:
 
 ## Quick Start
 
+After prerequisites are installed, it's just 3 commands:
+
 ```bash
-# Create project folder and initialize
+# 1. Create project folder
 mkdir my-project && cd my-project
+
+# 2. Initialize (setup wizard runs automatically on first use)
 ai-phases init
 
-# ONE COMMAND does everything:
+# 3. ONE COMMAND does everything:
 ai-phases refine "build a crypto price dashboard with real-time updates"
-
-# That's it! The tool will:
-# 1. Generate enhanced specification (Claude Opus)
-# 2. Create phase plan with tasks
-# 3. Create private GitHub repo
-# 4. Run ALL phases automatically
-# 5. Commit & push after each phase
-# 6. Generate handovers between phases
 ```
+
+That's it! The tool will:
+1. Generate enhanced specification (Claude Opus)
+2. Create phase plan with tasks
+3. Create private GitHub repo
+4. Run ALL phases automatically
+5. Commit & push after each phase
+6. Generate handovers between phases
 
 ### Want Manual Control?
 
@@ -242,7 +251,7 @@ ai-phases run --phase 2
 | `ai-phases handover` | Generate handover summary for current phase (automated) |
 | `ai-phases rollback` | Rollback a failed phase to retry |
 | `ai-phases sync` | Detect and reconcile manual changes |
-| `ai-phases config` | Manage configuration |
+| `ai-phases config` | Manage configuration (use `--setup` to reconfigure) |
 
 ---
 
