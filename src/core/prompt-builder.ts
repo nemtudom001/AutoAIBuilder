@@ -50,6 +50,9 @@ Do NOT omit, simplify, or defer any of these features. They are core requirement
 - Design System: ${config.defaults.design_system}
 
 ## Output Format
+**CRITICAL: Output the ENTIRE specification as your response. Do NOT use any tools to save files.**
+**Your response text IS the output - it will be captured and saved automatically.**
+
 Provide a structured markdown specification with clear sections for:
 - Project Overview
 - Core Features (MUST include all explicit features listed above)
@@ -57,7 +60,9 @@ Provide a structured markdown specification with clear sections for:
 - Out of Scope (only things NOT mentioned in original idea)
 - Design Direction
 
-Be specific and concrete. This will be used to generate development phases.`;
+Be specific and concrete. This will be used to generate development phases.
+
+**REMINDER: Do NOT use Write/Edit tools. Output the full specification as text in your response.**`;
 
   // Extract libraries to look up from the idea
   const context7Lookups = extractLibrariesToLookup(idea, config);
@@ -199,7 +204,13 @@ Validation criteria must be VERIFIABLE, not subjective:
 - EVERY feature in the spec must appear in at least one phase's tasks
 
 ## Output Format
-Provide the phase plan in this exact markdown structure:
+**CRITICAL INSTRUCTIONS - READ CAREFULLY:**
+1. **DO NOT use Write, Edit, or any file tools** - Your text response IS the output
+2. **DO NOT save files** - The system will capture your response and save it
+3. **Output the ENTIRE plan** - From "# Phase Plan" header through "## Summary"
+4. **Start your response with "# Phase Plan"** - No preamble or explanation
+
+Provide the COMPLETE phase plan in this exact markdown structure (output ALL of this):
 
 # Phase Plan
 
@@ -224,12 +235,14 @@ npm run lint
 # any other commands that should pass
 \`\`\`
 
-(Repeat for each phase)
+(Repeat for each phase - include ALL phases in your response)
 
 ## Summary
 - Total Phases: [N]
 - Estimated Total Time: [X hours]
-- Features Covered: [List all features from spec and which phase covers them]`;
+- Features Covered: [List all features from spec and which phase covers them]
+
+**REMINDER: Do NOT use Write/Edit tools. Output the full plan as text in your response.**`;
 
   return {
     model: 'planning',

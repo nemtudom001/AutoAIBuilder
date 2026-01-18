@@ -173,8 +173,12 @@ export async function refineCommand(idea: string, options: RefineOptions): Promi
   spinner2.succeed(`Phase plan generated in ${elapsed2}s`);
   
   // Extract and save phase plan
-  const phasePlan = extractMarkdown(stage2Result.output);
+  let phasePlan = extractMarkdown(stage2Result.output);
   const phasePlanPath = path.join(getProjectPhasesDir(), 'plan.md');
+  
+  // Log output size for debugging
+  console.log(chalk.dim(`Output received: ${stage2Result.output.length} chars, extracted: ${phasePlan.length} chars`));
+  
   await fs.writeFile(phasePlanPath, phasePlan);
   console.log(chalk.green('✓ Saved: ') + chalk.dim(phasePlanPath));
   
@@ -184,7 +188,52 @@ export async function refineCommand(idea: string, options: RefineOptions): Promi
   const spinner3 = ora('Processing phase plan...').start();
   
   try {
-    const phases = parsePhasePlan(phasePlan, globalConfig.defaults.max_retry_attempts);
+    let phases = parsePhasePlan(phasePlan, globalConfig.defaults.max_retry_attempts);
+    
+    // Detect truncated output - if we only got 1 phase and it's not named "Project Setup" or has weird numbering
+    const looksTruncated = phases.length === 1 && !phasePlan.includes('## Phase 1:');
+    
+    // Fallback 1: Check if AI wrote to phases.md
+    if (phases.length <= 1 || looksTruncated) {
+      const alternatePhaseFile = path.join(getProjectPhasesDir(), 'phases.md');
+      if (await fs.pathExists(alternatePhaseFile)) {
+        const alternatePlan = await fs.readFile(alternatePhaseFile, 'utf-8');
+        const altPhases = parsePhasePlan(alternatePlan, globalConfig.defaults.max_retry_attempts);
+        if (altPhases.length > phases.length) {
+          console.log(chalk.dim('Found detailed plan in phases.md, using that instead.'));
+          phasePlan = alternatePlan;
+          phases = altPhases;
+          await fs.writeFile(phasePlanPath, phasePlan);
+        }
+      }
+    }
+    
+    // Fallback 2: Check for any .md files created by the AI in the project
+    if (phases.length <= 1 || looksTruncated) {
+      const possiblePlanFiles = ['plan.md', 'project-plan.md', 'phase-plan.md'];
+      for (const filename of possiblePlanFiles) {
+        const possiblePath = path.join(process.cwd(), filename);
+        if (await fs.pathExists(possiblePath)) {
+          const altContent = await fs.readFile(possiblePath, 'utf-8');
+          if (altContent.includes('## Phase 1:') && altContent.includes('## Phase 2:')) {
+            const altPhases = parsePhasePlan(altContent, globalConfig.defaults.max_retry_attempts);
+            if (altPhases.length > phases.length) {
+              console.log(chalk.dim(`Found detailed plan in ${filename}, using that.`));
+              phasePlan = altContent;
+              phases = altPhases;
+              await fs.writeFile(phasePlanPath, phasePlan);
+              break;
+            }
+          }
+        }
+      }
+    }
+    
+    // Warn if output looks truncated
+    if (phases.length === 1 && looksTruncated) {
+      console.log(chalk.yellow('⚠️  Warning: Output may have been truncated. Only 1 phase detected.'));
+      console.log(chalk.dim('If this seems wrong, check .ai-phases/plan.md and re-run refine.'));
+    }
     
     if (state) {
       state.phases = phases;

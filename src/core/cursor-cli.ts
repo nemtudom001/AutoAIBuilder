@@ -276,14 +276,26 @@ export function extractContent(output: string, startMarker: string, endMarker?: 
  * Handles cases where the AI wraps output in code fences
  */
 export function extractMarkdown(output: string): string {
-  // If output is wrapped in markdown code fence, extract it
-  const fenceMatch = output.match(/```(?:markdown|md)?\n([\s\S]*?)```/);
-  if (fenceMatch) {
-    return fenceMatch[1].trim();
+  const trimmed = output.trim();
+  
+  // Check if the ENTIRE output is wrapped in a single markdown code fence
+  // The output should start with ```markdown or ```md and end with ```
+  const startsWithFence = /^```(?:markdown|md)?\s*\n/.test(trimmed);
+  const endsWithFence = /\n```\s*$/.test(trimmed);
+  
+  if (startsWithFence && endsWithFence) {
+    // Find the position after the opening fence
+    const firstNewline = trimmed.indexOf('\n');
+    // Find the position of the LAST closing fence (not the first)
+    const lastFenceIndex = trimmed.lastIndexOf('\n```');
+    
+    if (firstNewline !== -1 && lastFenceIndex > firstNewline) {
+      return trimmed.substring(firstNewline + 1, lastFenceIndex).trim();
+    }
   }
   
   // Otherwise return the whole output, cleaned up
-  return output
+  return trimmed
     .replace(/^#+\s*Response:?\s*$/gim, '')
     .replace(/^Here(?:'s| is) (?:the|your|a).*:?\s*$/gim, '')
     .trim();
