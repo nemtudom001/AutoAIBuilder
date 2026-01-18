@@ -2,6 +2,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import chalk from 'chalk';
 import path from 'path';
+import fs from 'fs-extra';
 
 const execAsync = promisify(exec);
 
@@ -87,12 +88,87 @@ export async function getGitStatus(): Promise<GitStatus> {
 
 /**
  * Initialize git repository if not already initialized
+ * Also ensures a proper .gitignore exists
  */
 export async function initGitRepo(): Promise<void> {
   const isRepo = await isGitRepo();
   if (!isRepo) {
     await execAsync('git init');
     console.log(chalk.green('✓ Initialized git repository'));
+  }
+  
+  // Ensure .gitignore exists with essential patterns
+  await ensureGitignore();
+}
+
+/**
+ * Ensure .gitignore has essential patterns to prevent large file commits
+ */
+export async function ensureGitignore(): Promise<void> {
+  const gitignorePath = path.join(process.cwd(), '.gitignore');
+  
+  const essentialPatterns = [
+    '# Dependencies',
+    'node_modules/',
+    '',
+    '# Build output',
+    '.next/',
+    'dist/',
+    'build/',
+    'out/',
+    '',
+    '# IDE',
+    '.idea/',
+    '.vscode/',
+    '*.swp',
+    '*.swo',
+    '',
+    '# Environment',
+    '.env',
+    '.env.local',
+    '.env.*.local',
+    '',
+    '# OS',
+    '.DS_Store',
+    'Thumbs.db',
+    '',
+    '# Debug',
+    'npm-debug.log*',
+    'yarn-debug.log*',
+    'yarn-error.log*',
+    '',
+    '# Testing',
+    'coverage/',
+    '',
+    '# Misc',
+    '*.tsbuildinfo',
+  ];
+  
+  let existingContent = '';
+  if (await fs.pathExists(gitignorePath)) {
+    existingContent = await fs.readFile(gitignorePath, 'utf-8');
+  }
+  
+  // Check which essential patterns are missing
+  const missingPatterns: string[] = [];
+  for (const pattern of essentialPatterns) {
+    if (pattern === '' || pattern.startsWith('#')) continue;
+    // Check if pattern (or a less specific version) already exists
+    const patternWithoutSlash = pattern.replace(/\/$/, '');
+    if (!existingContent.includes(pattern) && !existingContent.includes(patternWithoutSlash)) {
+      missingPatterns.push(pattern);
+    }
+  }
+  
+  if (missingPatterns.length > 0) {
+    // If file doesn't exist or is empty, write the full template
+    if (!existingContent.trim()) {
+      await fs.writeFile(gitignorePath, essentialPatterns.join('\n') + '\n');
+    } else {
+      // Append missing patterns
+      const toAdd = '\n# Added by AI Phase Builder\n' + missingPatterns.join('\n') + '\n';
+      await fs.appendFile(gitignorePath, toAdd);
+    }
   }
 }
 
@@ -117,6 +193,9 @@ export async function commitPhaseCompletion(
   }
   
   try {
+    // Ensure .gitignore exists before staging to prevent committing large files
+    await ensureGitignore();
+    
     // Stage all changes
     await execAsync('git add -A');
     
@@ -334,6 +413,9 @@ export async function createGitHubRepo(
     console.log(chalk.dim('  Initialized git repository'));
   }
 
+  // Ensure .gitignore exists before any commits
+  await ensureGitignore();
+  
   // Create initial commit if no commits exist
   try {
     await execAsync('git rev-parse HEAD');

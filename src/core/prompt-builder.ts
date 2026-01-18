@@ -315,6 +315,17 @@ ${phase.validation_criteria.map(c => `- [ ] ${c}`).join('\n')}
 - Design: ${config.defaults.design_system}
 - Follow existing codebase patterns
 
+## CRITICAL Technical Requirements
+**Framer Motion (motion/react):**
+- When using \`Variants\` type, use typed easings: \`ease: [0.4, 0, 0.2, 1]\` (cubic bezier) instead of \`ease: "easeOut"\`
+- Or import and use: \`import type { Transition } from "motion/react"\` with proper casting
+- Always test that TypeScript compiles without errors
+
+**Tailwind CSS v4 + shadcn/ui:**
+- Do NOT use \`@apply\` with CSS variable-based utilities like \`border-border\` - use inline classes instead
+- If globals.css has \`@theme\` block, CSS variables are defined there
+- Use direct color values in \`@layer base\` instead of \`@apply\`
+
 `;
 
   // Rules - keep focused

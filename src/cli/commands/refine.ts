@@ -358,8 +358,17 @@ export async function refineCommand(idea: string, options: RefineOptions): Promi
 function parsePhasePlan(planContent: string, maxAttempts: number): PhaseState[] {
   const phases: PhaseState[] = [];
   
+  // First, strip any AI preamble before the actual plan
+  // Look for "# Phase Plan" header as the start of actual content
+  let contentToProcess = planContent;
+  const phasePlanMatch = planContent.match(/^#\s*Phase\s*Plan\s*$/im);
+  if (phasePlanMatch && phasePlanMatch.index !== undefined) {
+    // Start processing from the "# Phase Plan" header
+    contentToProcess = planContent.substring(phasePlanMatch.index);
+  }
+  
   // Split content by phase headers to get each phase section
-  const phaseSections = planContent.split(/(?=##\s*Phase\s*\d+:)/i);
+  const phaseSections = contentToProcess.split(/(?=##\s*Phase\s*\d+:)/i);
   
   // Track sequential phase number (always start from 1)
   let sequentialPhaseNum = 0;
@@ -396,12 +405,15 @@ function parsePhasePlan(planContent: string, maxAttempts: number): PhaseState[] 
     
     // Extract validation criteria
     const validationCriteria: string[] = [];
-    const validationSection = phaseContent.match(/###\s*Validation\s*Criteria\s*([\s\S]*?)(?=###|$)/i);
+    const validationSection = phaseContent.match(/###\s*Validation\s*Criteria\s*([\s\S]*?)(?=###|##|$)/i);
     if (validationSection) {
-      const criteriaLines = validationSection[1].match(/^-\s*\[.\]\s*(.+)$/gm) || [];
+      // Match both checkbox format "- [ ]" and plain list "- "
+      const criteriaLines = validationSection[1].match(/^-\s*(?:\[.\]\s*)?(.+)$/gm) || [];
       criteriaLines.forEach(line => {
-        const criterion = line.replace(/^-\s*\[.\]\s*/, '').trim();
-        validationCriteria.push(criterion);
+        const criterion = line.replace(/^-\s*(?:\[.\]\s*)?/, '').trim();
+        if (criterion) {
+          validationCriteria.push(criterion);
+        }
       });
     }
     

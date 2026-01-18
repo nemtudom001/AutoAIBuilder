@@ -274,13 +274,16 @@ export function extractContent(output: string, startMarker: string, endMarker?: 
 /**
  * Extract markdown content from cursor output
  * Handles cases where the AI wraps output in code fences
+ * 
+ * IMPORTANT: Be careful not to strip content that contains internal code fences
+ * (like ```bash blocks for validation commands)
  */
 export function extractMarkdown(output: string): string {
   const trimmed = output.trim();
   
   // Check if the ENTIRE output is wrapped in a single markdown code fence
   // The output should start with ```markdown or ```md and end with ```
-  const startsWithFence = /^```(?:markdown|md)?\s*\n/.test(trimmed);
+  const startsWithFence = /^```(?:markdown|md)\s*\n/.test(trimmed);
   const endsWithFence = /\n```\s*$/.test(trimmed);
   
   if (startsWithFence && endsWithFence) {
@@ -289,14 +292,44 @@ export function extractMarkdown(output: string): string {
     // Find the position of the LAST closing fence (not the first)
     const lastFenceIndex = trimmed.lastIndexOf('\n```');
     
+    // Only strip if the last fence is truly the closing fence of the outer wrapper
+    // Check that there's content between the fences and it looks like markdown
     if (firstNewline !== -1 && lastFenceIndex > firstNewline) {
-      return trimmed.substring(firstNewline + 1, lastFenceIndex).trim();
+      const innerContent = trimmed.substring(firstNewline + 1, lastFenceIndex).trim();
+      
+      // Verify this looks like actual markdown content (has headers or structure)
+      // and not just code that happens to start with #
+      if (innerContent.startsWith('#') || innerContent.includes('\n## ')) {
+        return innerContent;
+      }
     }
   }
   
-  // Otherwise return the whole output, cleaned up
-  return trimmed
-    .replace(/^#+\s*Response:?\s*$/gim, '')
-    .replace(/^Here(?:'s| is) (?:the|your|a).*:?\s*$/gim, '')
-    .trim();
+  // Check for AI preamble and strip it
+  // Common patterns: "Here is the plan:", "Let me create...", "Now I have..."
+  let cleaned = trimmed;
+  
+  // Remove common AI preamble that appears before the actual content
+  const preamblePatterns = [
+    /^(?:Here(?:'s| is) (?:the|your|a)[^\n]*\n+)/i,
+    /^(?:Now I (?:have|will|can)[^\n]*\n+)/i,
+    /^(?:Let me [^\n]*\n+)/i,
+    /^(?:I(?:'ll| will) [^\n]*\n+)/i,
+    /^#+\s*Response:?\s*\n+/im,
+  ];
+  
+  for (const pattern of preamblePatterns) {
+    // Only remove if there's actual markdown content after the preamble
+    const match = cleaned.match(pattern);
+    if (match) {
+      const afterPreamble = cleaned.substring(match[0].length);
+      // Check if what follows looks like markdown (starts with # or has structure)
+      if (afterPreamble.startsWith('#') || afterPreamble.includes('\n## ')) {
+        cleaned = afterPreamble;
+        break;
+      }
+    }
+  }
+  
+  return cleaned.trim();
 }
