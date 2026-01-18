@@ -15,32 +15,141 @@ Fully automated AI-powered project phase orchestration for Cursor IDE. Transform
 - **Context7 Integration** - Always use up-to-date documentation
 - **Git Integration** - Auto-commit and auto-push after each phase
 
-## Requirements
-
-- Node.js 18+
-- Cursor IDE with active subscription
-- Cursor CLI (`cursor-agent`) installed
-- Context7 MCP enabled (recommended)
+---
 
 ## Installation
 
+### Prerequisites
+
+| Requirement | Version |
+|-------------|---------|
+| Node.js | 18+ |
+| Cursor IDE | Active subscription required |
+| Git | Any recent version |
+
+### Step 1: Install AI Phase Builder
+
 ```bash
-# Install Cursor CLI first
+npm install -g ai-phase-builder
+```
+
+### Step 2: Install Cursor CLI
+
+The Cursor CLI (`cursor-agent`) requires a Unix-like environment. Follow the instructions for your operating system:
+
+<details>
+<summary><strong>🪟 Windows (WSL Required)</strong></summary>
+
+Windows users must use **WSL (Windows Subsystem for Linux)** to run `cursor-agent`.
+
+#### 2a. Install WSL (if not already installed)
+
+Open **PowerShell as Administrator** and run:
+
+```powershell
+wsl --install
+```
+
+This installs Ubuntu by default. **Restart your computer** when prompted.
+
+#### 2b. Set up WSL environment
+
+After restart, open **Ubuntu** from Start menu. It will complete setup and ask you to create a username/password.
+
+Then run these commands in the Ubuntu terminal:
+
+```bash
+# Update packages
+sudo apt update && sudo apt upgrade -y
+
+# Install curl (if not present)
+sudo apt install curl -y
+
+# Install Cursor CLI
 curl https://cursor.com/install -fsS | bash
 
-# Global install of AI Phase Builder
-npm install -g ai-phase-builder
+# Add to PATH (run this line exactly)
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
 
-# Or run directly
-npx ai-phase-builder
+# Verify installation
+cursor-agent --version
 ```
+
+#### 2c. Login to Cursor
+
+```bash
+cursor-agent login
+```
+
+This opens your browser - sign in with your Cursor account.
+
+#### ✅ Done! 
+
+You can now use `ai-phases` from any Windows terminal (CMD, PowerShell, or Git Bash). The tool automatically routes commands through WSL.
+
+</details>
+
+<details>
+<summary><strong>🍎 macOS</strong></summary>
+
+Open Terminal and run:
+
+```bash
+# Install Cursor CLI
+curl https://cursor.com/install -fsS | bash
+
+# Add to PATH
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+
+# Verify installation
+cursor-agent --version
+
+# Login to Cursor
+cursor-agent login
+```
+
+</details>
+
+<details>
+<summary><strong>🐧 Linux</strong></summary>
+
+Open terminal and run:
+
+```bash
+# Install Cursor CLI
+curl https://cursor.com/install -fsS | bash
+
+# Add to PATH
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+
+# Verify installation
+cursor-agent --version
+
+# Login to Cursor
+cursor-agent login
+```
+
+</details>
+
+### Step 3: Run Setup
+
+```bash
+ai-phases config --setup
+```
+
+This interactive wizard will:
+- Verify your Cursor CLI installation
+- Configure your preferences (UI library, design system)
+- Set up automation options (auto-run, auto-commit, auto-push)
+
+---
 
 ## Quick Start
 
 ```bash
-# First time setup - opens browser for Cursor login
-ai-phases config --setup
-
 # Create project folder and initialize
 mkdir my-project && cd my-project
 ai-phases init
@@ -68,6 +177,8 @@ ai-phases run --phase 1
 ai-phases run --phase 2
 ```
 
+---
+
 ## Commands
 
 | Command | Description |
@@ -81,6 +192,8 @@ ai-phases run --phase 2
 | `ai-phases rollback` | Rollback a failed phase to retry |
 | `ai-phases sync` | Detect and reconcile manual changes |
 | `ai-phases config` | Manage configuration |
+
+---
 
 ## How It Works
 
@@ -112,6 +225,7 @@ ai-phases run --phase 1
 # → Changes are applied automatically
 # → Handover is generated for next phase
 # → Git checkpoint is created
+# → Auto-continues to next phase (if enabled)
 ```
 
 ```
@@ -136,34 +250,7 @@ NOT included (cleared):
 - Rollback notes guide the next attempt
 - Blocked phases require manual intervention
 
-## Project Structure
-
-When initialized, creates:
-
-```
-.ai-phases/
-├── config.json       # Project settings
-├── state.json        # Phase tracking state
-├── context.md        # Persistent project context
-├── plan.md           # Master phase plan
-├── enhanced-spec.md  # AI-enhanced specification
-├── phases/
-│   ├── phase-1/
-│   │   ├── state.json
-│   │   ├── prompt.md
-│   │   ├── handover.md
-│   │   └── attempt-1/
-│   │       ├── output.md
-│   │       └── error.md (if failed)
-│   └── phase-2/
-│       └── ...
-├── logs/
-│   └── drift.log
-└── templates/
-    ├── handover.md
-    ├── failure-report.md
-    └── phase-prompt.md
-```
+---
 
 ## Configuration
 
@@ -199,63 +286,153 @@ Global config stored at: `~/.ai-phase-builder/config.json`
 | `auto_commit` | `true` | Commit after each phase |
 | `auto_push` | `true` | Push to remote after each commit |
 
-### Cursor CLI Authentication
+---
 
-The tool uses Cursor's browser-based authentication - no API keys needed!
-
-During setup, you'll be prompted to login:
-```bash
-ai-phases config --setup
-# → Opens browser for Cursor login (one-time)
-```
-
-Or login manually anytime:
-```bash
-cursor-agent login   # Opens browser to authenticate
-cursor-agent status  # Check if logged in
-cursor-agent logout  # Sign out
-```
-
-## Context7 Integration
+## Context7 Integration (Recommended)
 
 Context7 MCP provides up-to-date documentation directly in Cursor. Enable it:
 
-1. Open Cursor Settings (Cmd+,)
+1. Open Cursor Settings (Cmd+, or Ctrl+,)
 2. Go to: Features → MCP Servers
 3. Add Context7: https://context7.com/docs/clients/cursor
 4. Restart Cursor
 
+---
+
+## Project Structure
+
+When initialized, creates:
+
+```
+.ai-phases/
+├── config.json       # Project settings
+├── state.json        # Phase tracking state
+├── context.md        # Persistent project context
+├── plan.md           # Master phase plan
+├── enhanced-spec.md  # AI-enhanced specification
+├── phases/
+│   ├── phase-1/
+│   │   ├── state.json
+│   │   ├── prompt.md
+│   │   ├── handover.md
+│   │   └── attempt-1/
+│   │       ├── output.md
+│   │       └── error.md (if failed)
+│   └── phase-2/
+│       └── ...
+├── logs/
+│   └── drift.log
+└── templates/
+    ├── handover.md
+    ├── failure-report.md
+    └── phase-prompt.md
+```
+
+---
+
+## Troubleshooting
+
+### "cursor-agent CLI not found"
+
+<details>
+<summary><strong>Windows</strong></summary>
+
+The tool requires WSL with `cursor-agent` installed inside it.
+
+1. **Check WSL is installed:**
+   ```powershell
+   wsl --list
+   ```
+   Should show "Ubuntu" (or another distro).
+
+2. **Check cursor-agent is installed in WSL:**
+   ```bash
+   wsl -d Ubuntu -e bash -c "cursor-agent --version"
+   ```
+
+3. **If not installed, follow the Windows installation steps above.**
+
+</details>
+
+<details>
+<summary><strong>macOS / Linux</strong></summary>
+
+```bash
+# Reinstall
+curl https://cursor.com/install -fsS | bash
+
+# Add to PATH
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc  # or ~/.zshrc for macOS
+source ~/.bashrc  # or source ~/.zshrc
+
+# Verify
+cursor-agent --version
+```
+
+</details>
+
+### "Not logged in to Cursor CLI"
+
+```bash
+# Windows (run in any terminal)
+wsl -d Ubuntu -e bash -c "cursor-agent login"
+
+# macOS / Linux
+cursor-agent login
+```
+
+### Phase keeps failing
+
+1. Check the error in `.ai-phases/phases/phase-N/attempt-X/error.md`
+2. Use `ai-phases rollback --phase N` to reset
+3. Consider simplifying the phase tasks in `plan.md`
+
+### WSL not starting properly (Windows)
+
+```powershell
+# Restart WSL
+wsl --shutdown
+wsl
+
+# If that doesn't work, reset WSL
+wsl --unregister Ubuntu
+wsl --install -d Ubuntu
+```
+
+### "Permission denied" errors
+
+```bash
+# Make cursor-agent executable
+chmod +x ~/.local/bin/cursor-agent
+```
+
+---
+
 ## Example Workflow
 
 ```bash
-# 1. Start with an idea (runs automatically)
+# 1. Create project
+mkdir my-dashboard && cd my-dashboard
+ai-phases init
+
+# 2. Start with an idea (runs automatically)
 ai-phases refine "build a task management app with drag-and-drop"
 
 # Output:
-# ✓ Enhanced specification generated in 45s
-# ✓ Phase plan generated in 32s
-# ✓ 5 phases created
-#
-# Ready to execute! Run:
-#   ai-phases run --phase 1
+# ✓ Enhanced specification generated
+# ✓ Phase plan generated (5 phases)
+# ✓ GitHub repo created
+# ✓ Running phase 1...
+# ✓ Phase 1 complete
+# ✓ Running phase 2...
+# ... continues automatically ...
+# 🎉 All phases complete!
 
-# 2. Execute phases (each runs automatically)
-ai-phases run --phase 1
-# → Phase executes via cursor-agent
-# → Handover auto-generated
-# → Git checkpoint created
-
-ai-phases run --phase 2
-ai-phases run --phase 3
-# ...
-
-# 3. If a phase fails, it auto-saves the error
-ai-phases rollback --phase 3
-ai-phases run --phase 3
-
-# 4. Check status anytime
-ai-phases status --verbose
+# 3. Check status anytime
+ai-phases status
 ```
+
+---
 
 ## Dry Run Mode
 
@@ -265,24 +442,23 @@ Preview what will be executed without running:
 ai-phases run --phase 1 --dry-run
 ```
 
-## Troubleshooting
+---
 
-### "cursor-agent CLI not found"
-Install the Cursor CLI:
-```bash
-curl https://cursor.com/install -fsS | bash
-```
+## FAQ
 
-### "Not logged in to Cursor CLI"
-Authenticate with your browser:
-```bash
-cursor-agent login
-```
+**Q: Does this work without Cursor subscription?**
+No. The tool uses `cursor-agent` which requires an active Cursor subscription.
 
-### Phase keeps failing
-1. Check the error in `.ai-phases/phases/phase-N/attempt-X/error.md`
-2. Use `ai-phases rollback --phase N` to reset
-3. Consider simplifying the phase tasks in `plan.md`
+**Q: Why WSL on Windows?**
+The `cursor-agent` CLI doesn't have native Windows support. WSL provides a Linux environment that works seamlessly.
+
+**Q: Can I use this with other AI tools?**
+Currently, this is designed specifically for Cursor IDE. The architecture could be extended for other tools in the future.
+
+**Q: How much does it cost?**
+The tool itself is free. You only pay for your Cursor subscription (which provides access to Claude Opus and Gemini Flash).
+
+---
 
 ## License
 
