@@ -75,9 +75,18 @@ export async function getGitStatus(): Promise<GitStatus> {
       currentCommit: commitResult.stdout.trim(),
     };
   } catch (error) {
+    // Try to get branch name with fallback
+    let branch = 'main';
+    try {
+      const { stdout } = await execAsync('git branch --show-current');
+      branch = stdout.trim() || 'main';
+    } catch {
+      // Fallback to main
+    }
+    
     return {
       isRepo: true,
-      branch: 'unknown',
+      branch,
       hasChanges: false,
       modifiedFiles: [],
       untrackedFiles: [],
@@ -493,8 +502,20 @@ export async function pushToRemote(): Promise<{ success: boolean; error?: string
   }
 
   try {
-    // Get current branch
-    const branch = status.branch || 'main';
+    // Get current branch - try to detect it reliably
+    let branch = status.branch;
+    if (!branch || branch === 'unknown') {
+      try {
+        const { stdout } = await execAsync('git branch --show-current');
+        branch = stdout.trim();
+      } catch {
+        branch = 'main';
+      }
+    }
+    
+    if (!branch) {
+      branch = 'main';
+    }
     
     // Push with upstream tracking
     await execAsync(`git push -u origin ${branch}`, { timeout: 60000 });
