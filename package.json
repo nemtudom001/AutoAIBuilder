@@ -1,7 +1,7 @@
 {
   "name": "ai-phase-builder",
   "version": "1.0.0",
-  "description": "AI-powered project phase orchestration for Cursor IDE",
+  "description": "AI-powered project phase orchestration for Cursor IDE. Transform ideas into structured development phases with intelligent handovers, rollback support, and Context7 integration.",
   "main": "dist/index.js",
   "bin": {
     "ai-phases": "./dist/cli/index.js"
@@ -17,13 +17,28 @@
   "keywords": [
     "ai",
     "cursor",
+    "cursor-ide",
     "coding",
     "phases",
     "orchestration",
-    "cli"
+    "cli",
+    "claude",
+    "gemini",
+    "context7",
+    "developer-tools",
+    "automation",
+    "project-management"
   ],
-  "author": "",
+  "author": "nemtudom001",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nemtudom001/AutoAIBuilder.git"
+  },
+  "bugs": {
+    "url": "https://github.com/nemtudom001/AutoAIBuilder/issues"
+  },
+  "homepage": "https://github.com/nemtudom001/AutoAIBuilder#readme",
   "dependencies": {
     "chalk": "^5.3.0",
     "commander": "^12.1.0",
