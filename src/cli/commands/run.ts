@@ -1004,74 +1004,64 @@ async function generateAutoHandover(
   const completedTasks = phase?.tasks.filter(t => t.status === 'completed') || [];
   const allTasksCompleted = phase?.tasks.length === completedTasks.length;
   
-  const handoverPrompt = `You MUST generate a COMPREHENSIVE handover document for Phase ${phaseNumber}.
+  const handoverPrompt = `OUTPUT A HANDOVER DOCUMENT FOR PHASE ${phaseNumber}.
 
-This handover is CRITICAL - it is the ONLY context the next AI agent will have about what was built.
-If you skip details, the next phase WILL FAIL because the AI won't know what exists.
+**CRITICAL INSTRUCTION**: Your ENTIRE response must BE the handover document content itself.
+DO NOT say "I've created" or "Here's the handover" - just output the markdown content directly.
+DO NOT write to any files - just output the text.
+DO NOT include any preamble or explanation - start directly with the # heading.
 
-## Phase ${phaseNumber} Information
-- **Name**: ${phase?.name || 'Unknown'}
-- **Description**: ${phase?.description || 'Unknown'}
-- **Status**: ${allTasksCompleted ? 'ALL TASKS COMPLETED ✓' : 'Some tasks may be incomplete'}
+This handover will be saved to a file and is the ONLY context the next AI agent will have.
 
-## Tasks and Their Status
-${phase?.tasks.map(t => `- [${t.status === 'completed' ? 'x' : ' '}] ${t.description} (${t.status})`).join('\n') || 'Unknown'}
+---
 
-## Phase Output (What the AI did)
+## Context for generating the handover:
+
+**Phase ${phaseNumber}: ${phase?.name || 'Unknown'}**
+${phase?.description || ''}
+
+**Tasks:**
+${phase?.tasks.map(t => `- [${t.status === 'completed' ? 'x' : ' '}] ${t.description}`).join('\n') || 'Unknown'}
+
+**What was done (AI output):**
 ${output.substring(0, 6000)}${output.length > 6000 ? '\n...(truncated)' : ''}
 
-## Files Modified
+**Files Modified:**
 ${filesModified.map(f => `- ${f}`).join('\n')}
 
-## Key File Contents (for reference)
+**File Contents:**
 ${fileSnippets.join('\n\n')}
 
 ---
 
-## MANDATORY OUTPUT FORMAT - Follow this EXACTLY:
+NOW OUTPUT THE HANDOVER (start with # heading, no preamble):
 
 # Handover - Phase ${phaseNumber}: ${phase?.name || 'Unknown'}
 
 ## ✅ What Was Completed
-[List EVERY feature/component that was built - be specific with names and locations]
-- Feature 1: Description and where it lives
-- Feature 2: Description and where it lives
-- etc.
+[List EVERY feature/component - be specific with names and file paths]
 
 ## 📁 Key Files Created/Modified
 | File Path | Purpose | Key Exports/Components |
 |-----------|---------|----------------------|
-| path/to/file | what it does | Button, Card, etc |
+| ... | ... | ... |
 
 ## 🔧 Technical Decisions Made
-[Document any important decisions about architecture, libraries used, patterns followed]
-- Decision 1: Why and what
-- Decision 2: Why and what
+[Architecture, libraries, patterns - be specific]
 
 ## ⚠️ Important Notes for Next Phase
-[Things the next AI MUST know to avoid breaking things]
-- Note 1
-- Note 2
+[Critical things the next AI MUST know]
 
 ## 🔗 Dependencies & Integrations
-[What libraries were installed, what APIs are being used]
-- Library: version - what for
-- API: endpoint - what for
+| Package | Version | Purpose |
+|---------|---------|---------|
+| ... | ... | ... |
 
-## 📋 What Validation Passed
+## 📋 Validation Results
 ${phase?.validation_criteria.map(c => `- ✓ ${c}`).join('\n') || 'None specified'}
 
 ## 🎯 Suggested Focus for Next Phase
-[Based on what was built, what should the next phase focus on or be careful about]
-
----
-
-IMPORTANT RULES:
-1. Be SPECIFIC - use actual file names, component names, function names
-2. Do NOT be vague like "some components were created" - say WHICH components
-3. Include code snippets if they help explain a pattern
-4. Err on the side of MORE detail, not less
-5. This document should allow someone with NO context to understand what exists`;
+[What to build on, what to be careful about]`;
 
   try {
     // Use planning model for better quality handovers
@@ -1079,14 +1069,34 @@ IMPORTANT RULES:
     
     if (result.success && result.output.trim().length > 100) {
       const handoverContent = extractMarkdown(result.output);
-      const handoverPath = path.join(
-        getProjectPhasesDir(),
-        'phases',
-        `phase-${phaseNumber}`,
-        'handover.md'
-      );
-      await fs.writeFile(handoverPath, handoverContent);
-      console.log(chalk.green('✓ Comprehensive handover generated: ') + chalk.dim(handoverPath));
+      
+      // Validate the handover content is actually useful
+      // It should start with # and contain actual sections
+      const hasValidStructure = 
+        handoverContent.startsWith('#') && 
+        (handoverContent.includes('## ') || handoverContent.includes('### ')) &&
+        handoverContent.length > 200;
+      
+      // Check it's not just a meta-response
+      const isMetaResponse = 
+        handoverContent.startsWith("I've created") ||
+        handoverContent.startsWith("I have created") ||
+        handoverContent.startsWith("The document includes");
+      
+      if (hasValidStructure && !isMetaResponse) {
+        const handoverPath = path.join(
+          getProjectPhasesDir(),
+          'phases',
+          `phase-${phaseNumber}`,
+          'handover.md'
+        );
+        await fs.writeFile(handoverPath, handoverContent);
+        console.log(chalk.green('✓ Comprehensive handover generated: ') + chalk.dim(handoverPath));
+      } else {
+        // AI returned meta-response or invalid content, use fallback
+        console.log(chalk.yellow('⚠️  AI handover was meta-response, creating structured fallback...'));
+        await generateFallbackHandover(phaseNumber, phase, filesModified, output);
+      }
     } else {
       // Fallback - generate a basic handover from available info
       console.log(chalk.yellow('⚠️  AI handover generation incomplete, creating fallback...'));
@@ -1121,37 +1131,69 @@ async function generateFallbackHandover(
   const createdFiles = outputLines.filter(l => l.includes('Created') || l.includes('created')).slice(0, 10);
   const modifiedFiles = outputLines.filter(l => l.includes('Modified') || l.includes('modified')).slice(0, 10);
   
+  // Extract file snippets for key files (first 30 lines each)
+  const fileSnippets: string[] = [];
+  for (const file of filesModified.slice(0, 8)) {
+    try {
+      if (await fs.pathExists(file)) {
+        const content = await fs.readFile(file, 'utf-8');
+        const lines = content.split('\n').slice(0, 30).join('\n');
+        const ext = file.split('.').pop() || '';
+        fileSnippets.push(`### \`${file}\`\n\`\`\`${ext}\n${lines}\n${content.split('\n').length > 30 ? '// ... (truncated)' : ''}\`\`\``);
+      }
+    } catch {
+      // Skip unreadable files
+    }
+  }
+  
+  // Build file table
+  const fileTable = filesModified.map(f => {
+    const ext = f.split('.').pop() || '';
+    const purpose = 
+      f.includes('types') ? 'Type definitions' :
+      f.includes('/ui/') ? 'UI component' :
+      f.includes('utils') ? 'Utility functions' :
+      f.includes('lib/') ? 'Library code' :
+      f.includes('page') ? 'Page component' :
+      f.includes('layout') ? 'Layout component' :
+      f.includes('globals') ? 'Global styles' :
+      f.includes('config') ? 'Configuration' :
+      'Source file';
+    return `| \`${f}\` | ${purpose} |`;
+  }).join('\n');
+  
   const fallbackContent = `# Handover - Phase ${phaseNumber}: ${phase?.name || 'Unknown'}
 
-## ⚠️ Auto-Generated Fallback Handover
-This handover was auto-generated because the AI handover generation failed.
-Please review and enhance if needed.
+## ✅ What Was Completed
+Phase ${phaseNumber} (${phase?.name || 'Unknown'}) has been completed.
 
-## ✅ Phase Information
-- **Phase**: ${phaseNumber}
-- **Name**: ${phase?.name || 'Unknown'}
-- **Description**: ${phase?.description || 'Unknown'}
+${phase?.description || ''}
 
-## 📋 Tasks and Status
-${phase?.tasks.map((t: any, i: number) => `- [${t.status === 'completed' ? 'x' : ' '}] ${t.description} (${t.status})`).join('\n') || 'Unknown'}
+### Tasks Completed:
+${phase?.tasks.map((t: any) => `- [${t.status === 'completed' ? 'x' : ' '}] ${t.description}`).join('\n') || 'Unknown'}
 
-## 📁 Files Modified
-${filesModified.map(f => `- \`${f}\``).join('\n') || 'No files recorded'}
+## 📁 Key Files Created/Modified
+| File Path | Purpose |
+|-----------|---------|
+${fileTable || '| None recorded | - |'}
 
-## 📝 Creation/Modification Mentions in Output
-${createdFiles.concat(modifiedFiles).map(l => `- ${l.trim()}`).join('\n') || 'None detected'}
+## 🔧 Key File Contents
 
-## ✓ Validation Criteria
-${phase?.validation_criteria?.map((c: string) => `- ${c}`).join('\n') || 'None specified'}
+${fileSnippets.join('\n\n') || 'No file contents available'}
 
-## ⚠️ Important for Next Phase
+## 📋 Validation Results
+${phase?.validation_criteria?.map((c: string) => `- ✓ ${c}`).join('\n') || 'None specified'}
+
+## ⚠️ Important Notes for Next Phase
 - Review the files listed above before making changes
 - Check imports and dependencies are correct
 - Verify the validation commands still pass
+- The AI output below contains additional context
 
-## 📊 Raw Output Summary (First 50 lines)
+## 📊 AI Output Summary
 \`\`\`
-${outputLines.slice(0, 50).join('\n')}
+${outputLines.slice(0, 80).join('\n')}
+${outputLines.length > 80 ? '\n... (truncated)' : ''}
 \`\`\`
 `;
 

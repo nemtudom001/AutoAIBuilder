@@ -427,6 +427,24 @@ export function extractMarkdown(output: string): string {
   // Common patterns: "Here is the plan:", "Let me create...", "Now I have..."
   let cleaned = trimmed;
   
+  // Check if this is a meta-response rather than actual content
+  // Meta-responses describe what was done instead of being the content
+  const metaResponsePatterns = [
+    /^I(?:'ve| have) (?:created|generated|written|made)/i,
+    /^The document (?:includes|contains)/i,
+    /^This (?:handover|document) (?:includes|contains)/i,
+  ];
+  
+  const isMetaResponse = metaResponsePatterns.some(p => p.test(cleaned));
+  
+  // If it's a meta-response, try to find actual markdown content (starting with #)
+  if (isMetaResponse) {
+    const markdownStart = cleaned.search(/^#\s+/m);
+    if (markdownStart > 0) {
+      cleaned = cleaned.substring(markdownStart);
+    }
+  }
+  
   // Remove common AI preamble that appears before the actual content
   const preamblePatterns = [
     /^(?:Here(?:'s| is) (?:the|your|a)[^\n]*\n+)/i,
