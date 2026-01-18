@@ -36,44 +36,42 @@ export async function isCursorCliInstalled(): Promise<boolean> {
 }
 
 /**
- * Get the Cursor API key from config or environment
+ * Check if user is authenticated with Cursor CLI
+ * Uses `cursor-agent status` to verify login state
  */
-export async function getCursorApiKey(): Promise<string | null> {
-  // First check environment variable
-  if (process.env.CURSOR_API_KEY) {
-    return process.env.CURSOR_API_KEY;
+export async function isCursorCliAuthenticated(): Promise<boolean> {
+  try {
+    const { stdout } = await execAsync('cursor-agent status', { timeout: 10000 });
+    // Check for signs of authentication in status output
+    return stdout.toLowerCase().includes('logged in') || 
+           stdout.toLowerCase().includes('authenticated') ||
+           stdout.includes('@'); // Email usually shown when logged in
+  } catch {
+    return false;
   }
-  
-  // Then check config
-  const config = await loadGlobalConfig();
-  if (config?.cursor?.api_key) {
-    return config.cursor.api_key;
-  }
-  
-  return null;
 }
 
 /**
  * Run cursor-agent in headless mode with a prompt
  * This is the core function that executes AI tasks automatically
+ * Uses session-based authentication (cursor-agent login)
  */
 export async function runCursorAgent(options: CursorCliOptions): Promise<CursorCliResult> {
-  const apiKey = await getCursorApiKey();
-  
-  if (!apiKey) {
-    return {
-      success: false,
-      output: '',
-      error: 'Cursor API key not configured. Run: ai-phases config --setup',
-    };
-  }
-  
   const cliInstalled = await isCursorCliInstalled();
   if (!cliInstalled) {
     return {
       success: false,
       output: '',
       error: 'cursor-agent CLI not installed. Run: curl https://cursor.com/install -fsS | bash',
+    };
+  }
+  
+  const isAuthenticated = await isCursorCliAuthenticated();
+  if (!isAuthenticated) {
+    return {
+      success: false,
+      output: '',
+      error: 'Not logged in to Cursor CLI. Run: cursor-agent login',
     };
   }
   
@@ -95,17 +93,12 @@ export async function runCursorAgent(options: CursorCliOptions): Promise<CursorC
       '--force', // apply changes without manual confirmation
     ];
     
-    const env = {
-      ...process.env,
-      CURSOR_API_KEY: apiKey,
-    };
-    
     let output = '';
     let errorOutput = '';
     
     const child = spawn('cursor-agent', args, {
       cwd: workingDir,
-      env,
+      env: process.env,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     

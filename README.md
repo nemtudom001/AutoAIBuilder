@@ -36,7 +36,7 @@ npx ai-phase-builder
 ## Quick Start
 
 ```bash
-# First time setup - you'll need your Cursor API key
+# First time setup - opens browser for Cursor login
 ai-phases config --setup
 
 # Initialize in your project
@@ -156,7 +156,6 @@ Global config stored at: `~/.ai-phase-builder/config.json`
 ```json
 {
   "cursor": {
-    "api_key": "YOUR_CURSOR_API_KEY",
     "planning_model": "claude-opus-4.5",
     "execution_model": "gemini-3-flash",
     "context7_enabled": true
@@ -170,14 +169,22 @@ Global config stored at: `~/.ai-phase-builder/config.json`
 }
 ```
 
-### Getting Your Cursor API Key
+### Cursor CLI Authentication
 
-1. Open Cursor IDE
-2. Go to Settings → Account → API Key
-3. Copy the key
-4. Run `ai-phases config --setup` and paste it when prompted
+The tool uses Cursor's browser-based authentication - no API keys needed!
 
-Or set the environment variable: `export CURSOR_API_KEY=your-key`
+During setup, you'll be prompted to login:
+```bash
+ai-phases config --setup
+# → Opens browser for Cursor login (one-time)
+```
+
+Or login manually anytime:
+```bash
+cursor-agent login   # Opens browser to authenticate
+cursor-agent status  # Check if logged in
+cursor-agent logout  # Sign out
+```
 
 ## Context7 Integration
 
@@ -236,10 +243,10 @@ Install the Cursor CLI:
 curl https://cursor.com/install -fsS | bash
 ```
 
-### "Cursor API key not configured"
-Run setup again:
+### "Not logged in to Cursor CLI"
+Authenticate with your browser:
 ```bash
-ai-phases config --setup
+cursor-agent login
 ```
 
 ### Phase keeps failing

@@ -15,7 +15,7 @@ import {
 import {
   runPlanningTask,
   isCursorCliInstalled,
-  getCursorApiKey,
+  isCursorCliAuthenticated,
   extractMarkdown,
 } from '../../core/cursor-cli.js';
 
@@ -39,10 +39,10 @@ export async function handoverCommand(options: HandoverOptions): Promise<void> {
     process.exit(1);
   }
   
-  const apiKey = await getCursorApiKey();
-  if (!apiKey) {
-    console.log(chalk.red('\n✗ Cursor API key not configured.'));
-    console.log(chalk.dim('Run: ai-phases config --setup\n'));
+  const isAuthenticated = await isCursorCliAuthenticated();
+  if (!isAuthenticated) {
+    console.log(chalk.red('\n✗ Not logged in to Cursor CLI.'));
+    console.log(chalk.dim('Run: cursor-agent login\n'));
     process.exit(1);
   }
   

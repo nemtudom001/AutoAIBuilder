@@ -11,7 +11,6 @@ export interface GlobalConfig {
   setup_complete: boolean;
   cursor: {
     enabled: boolean;
-    api_key: string;
     planning_model: string;
     execution_model: string;
     context7_enabled: boolean;
@@ -92,7 +91,6 @@ export function getDefaultGlobalConfig(): GlobalConfig {
     setup_complete: false,
     cursor: {
       enabled: true,
-      api_key: '',
       planning_model: 'claude-opus-4.5',
       execution_model: 'gemini-3-flash',
       context7_enabled: false,
@@ -139,55 +137,65 @@ export async function runSetupWizard(): Promise<GlobalConfig> {
   console.log(chalk.green('  ✓ Context7 MCP   ') + chalk.dim('→ Documentation lookup (free)'));
   console.log(chalk.green('  ✓ Full Automation') + chalk.dim('→ No manual prompts or copy-paste\n'));
 
-  // Cursor API Key
+  // Check Cursor CLI installation and authentication
   console.log(chalk.yellow('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
-  console.log(chalk.yellow('  Cursor CLI Authentication\n'));
-  console.log(chalk.white('  To run phases automatically, we need your Cursor API key.'));
-  console.log(chalk.dim('  Get it from: Cursor Settings → Account → API Key'));
-  console.log(chalk.dim('  Or run: cursor-agent login\n'));
-  console.log(chalk.yellow('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
-
-  const apiKeyAnswer = await inquirer.prompt([
-    {
-      type: 'password',
-      name: 'api_key',
-      message: 'Cursor API Key:',
-      mask: '*',
-      validate: (input: string) => {
-        if (!input || input.trim().length < 10) {
-          return 'Please enter a valid Cursor API key';
-        }
-        return true;
-      },
-    },
-  ]);
-
-  // Verify the API key works
-  const verifySpinner = ora('Verifying API key...').start();
-  const keyValid = await verifyCursorApiKey(apiKeyAnswer.api_key);
+  console.log(chalk.yellow('  Cursor CLI Setup\n'));
   
-  if (!keyValid) {
-    verifySpinner.fail('API key verification failed');
-    console.log(chalk.red('\nCould not verify the API key. Please check:'));
-    console.log(chalk.dim('  1. The key is correct'));
-    console.log(chalk.dim('  2. cursor-agent CLI is installed (curl https://cursor.com/install -fsS | bash)'));
-    console.log(chalk.dim('  3. Your Cursor subscription is active\n'));
+  const cliStatus = await checkCursorCliStatus();
+  
+  if (!cliStatus.installed) {
+    console.log(chalk.red('  ✗ cursor-agent CLI not found\n'));
+    console.log(chalk.white('  Install it with:'));
+    console.log(chalk.cyan('    curl https://cursor.com/install -fsS | bash\n'));
+    console.log(chalk.yellow('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
     
-    const retryAnswer = await inquirer.prompt([
+    const continueAnswer = await inquirer.prompt([
       {
         type: 'confirm',
         name: 'continue_anyway',
-        message: 'Continue setup anyway? (you can fix this later)',
+        message: 'Continue setup anyway? (install CLI later)',
         default: false,
       },
     ]);
     
-    if (!retryAnswer.continue_anyway) {
-      console.log(chalk.dim('\nSetup cancelled. Run ') + chalk.cyan('ai-phases config --setup') + chalk.dim(' when ready.\n'));
+    if (!continueAnswer.continue_anyway) {
+      console.log(chalk.dim('\nSetup cancelled. Install cursor-agent first, then run:'));
+      console.log(chalk.cyan('  ai-phases config --setup\n'));
       process.exit(1);
     }
+  } else if (!cliStatus.authenticated) {
+    console.log(chalk.green('  ✓ cursor-agent CLI installed'));
+    console.log(chalk.yellow('  ✗ Not logged in\n'));
+    console.log(chalk.white('  You need to authenticate with Cursor.'));
+    console.log(chalk.dim('  This will open your browser to sign in.\n'));
+    console.log(chalk.yellow('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
+    
+    const loginAnswer = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'login_now',
+        message: 'Login to Cursor now?',
+        default: true,
+      },
+    ]);
+    
+    if (loginAnswer.login_now) {
+      const loginSpinner = ora('Opening browser for Cursor login...').start();
+      const loginSuccess = await runCursorLogin();
+      
+      if (loginSuccess) {
+        loginSpinner.succeed('Logged in to Cursor!');
+      } else {
+        loginSpinner.fail('Login failed or was cancelled');
+        console.log(chalk.yellow('\nYou can login later with: cursor-agent login\n'));
+      }
+    } else {
+      console.log(chalk.yellow('\nLogin later with: cursor-agent login\n'));
+    }
   } else {
-    verifySpinner.succeed('API key verified!');
+    console.log(chalk.green('  ✓ cursor-agent CLI installed'));
+    console.log(chalk.green('  ✓ Logged in to Cursor'));
+    console.log(chalk.yellow('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
   }
 
   // Context7 check
@@ -239,7 +247,6 @@ export async function runSetupWizard(): Promise<GlobalConfig> {
     setup_complete: true,
     cursor: {
       enabled: true,
-      api_key: apiKeyAnswer.api_key,
       planning_model: 'claude-opus-4.5',
       execution_model: 'gemini-3-flash',
       context7_enabled: answers.context7_enabled,
@@ -270,22 +277,65 @@ export async function runSetupWizard(): Promise<GlobalConfig> {
   return config;
 }
 
+interface CliStatus {
+  installed: boolean;
+  authenticated: boolean;
+}
+
 /**
- * Verify the Cursor API key works by attempting a simple CLI call
+ * Check if cursor-agent is installed and authenticated
  */
-async function verifyCursorApiKey(apiKey: string): Promise<boolean> {
+async function checkCursorCliStatus(): Promise<CliStatus> {
+  const { exec } = await import('child_process');
+  const { promisify } = await import('util');
+  const execAsync = promisify(exec);
+  
   try {
-    const { exec } = await import('child_process');
-    const { promisify } = await import('util');
-    const execAsync = promisify(exec);
-    
-    // Try to run cursor-agent with the API key to verify it works
-    const env = { ...process.env, CURSOR_API_KEY: apiKey };
-    await execAsync('cursor-agent --version', { env, timeout: 10000 });
-    return true;
+    // Check if CLI is installed
+    await execAsync('cursor-agent --version', { timeout: 5000 });
   } catch {
-    return false;
+    return { installed: false, authenticated: false };
   }
+  
+  try {
+    // Check authentication status
+    const { stdout } = await execAsync('cursor-agent status', { timeout: 10000 });
+    // If status returns successfully and contains user info, we're authenticated
+    const isAuthenticated = stdout.toLowerCase().includes('logged in') || 
+                           stdout.toLowerCase().includes('authenticated') ||
+                           stdout.includes('@'); // Usually shows email when logged in
+    return { installed: true, authenticated: isAuthenticated };
+  } catch {
+    // Status command failed, might not be authenticated
+    return { installed: true, authenticated: false };
+  }
+}
+
+/**
+ * Run cursor-agent login (opens browser)
+ */
+async function runCursorLogin(): Promise<boolean> {
+  const { spawn } = await import('child_process');
+  
+  return new Promise((resolve) => {
+    const child = spawn('cursor-agent', ['login'], {
+      stdio: 'inherit', // Show login process to user
+    });
+    
+    child.on('close', (code) => {
+      resolve(code === 0);
+    });
+    
+    child.on('error', () => {
+      resolve(false);
+    });
+    
+    // Timeout after 2 minutes
+    setTimeout(() => {
+      child.kill();
+      resolve(false);
+    }, 120000);
+  });
 }
 
 export async function showConfig(): Promise<void> {
