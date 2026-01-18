@@ -541,7 +541,7 @@ export async function runSetupWizard(): Promise<GlobalConfig> {
   }>(automationPrompts);
 
   const config: GlobalConfig = {
-    version: '1.6.0',
+    version: '1.6.2',
     setup_complete: true,
     cursor: {
       enabled: true,

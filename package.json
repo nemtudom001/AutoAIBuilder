@@ -1,6 +1,6 @@
 {
   "name": "ai-phase-builder",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "description": "AI-powered project phase orchestration for Cursor IDE. Transform ideas into structured development phases with intelligent handovers, rollback support, and Context7 integration.",
   "main": "dist/index.js",
   "bin": {
