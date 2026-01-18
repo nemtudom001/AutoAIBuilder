@@ -42,36 +42,47 @@ interface RunOptions {
 }
 
 export async function runCommand(options: RunOptions): Promise<void> {
+  const isAutoMode = options.auto === true;
+  
+  // Helper to handle errors - throw in auto mode, exit in manual mode
+  function handleError(message: string, hint?: string): never {
+    console.log(chalk.red(message));
+    if (hint) console.log(chalk.dim(hint));
+    if (isAutoMode) {
+      throw new Error(message);
+    }
+    process.exit(1);
+  }
+  
   const globalConfig = await loadGlobalConfig();
   if (!globalConfig || !globalConfig.setup_complete) {
-    console.log(chalk.yellow('Please run setup first: ai-phases config --setup'));
-    process.exit(1);
+    return handleError('Please run setup first: ai-phases config --setup');
   }
   
   // Verify CLI setup
   const cliInstalled = await isCursorCliInstalled();
   if (!cliInstalled) {
-    console.log(chalk.red('\n✗ cursor-agent CLI not found.'));
-    console.log(chalk.dim('Install with: curl https://cursor.com/install -fsS | bash\n'));
-    process.exit(1);
+    return handleError(
+      '\n✗ cursor-agent CLI not found.',
+      'Install with: curl https://cursor.com/install -fsS | bash\n'
+    );
   }
   
   const isAuthenticated = await isCursorCliAuthenticated();
   if (!isAuthenticated) {
-    console.log(chalk.red('\n✗ Not logged in to Cursor CLI.'));
-    console.log(chalk.dim('Run: cursor-agent login\n'));
-    process.exit(1);
+    return handleError(
+      '\n✗ Not logged in to Cursor CLI.',
+      'Run: cursor-agent login\n'
+    );
   }
   
   const state = await loadProjectState();
   if (!state) {
-    console.log(chalk.yellow('Project not initialized. Run: ai-phases init'));
-    process.exit(1);
+    return handleError('Project not initialized. Run: ai-phases init');
   }
   
   if (state.phases.length === 0) {
-    console.log(chalk.yellow('No phases defined. Run: ai-phases refine "your idea"'));
-    process.exit(1);
+    return handleError('No phases defined. Run: ai-phases refine "your idea"');
   }
   
   // Determine which phase to run
@@ -84,9 +95,10 @@ export async function runCommand(options: RunOptions): Promise<void> {
   
   const phase = state.phases.find(p => p.phase_number === phaseNumber);
   if (!phase) {
-    console.log(chalk.red(`Phase ${phaseNumber} not found.`));
-    console.log(chalk.dim(`Available phases: 1-${state.total_phases}`));
-    process.exit(1);
+    return handleError(
+      `Phase ${phaseNumber} not found.`,
+      `Available phases: ${state.phases.map(p => p.phase_number).join(', ')}`
+    );
   }
   
   // Check if phase is blocked
@@ -94,6 +106,7 @@ export async function runCommand(options: RunOptions): Promise<void> {
     console.log(chalk.red(`\n⛔ Phase ${phaseNumber} is BLOCKED after ${phase.max_attempts} failed attempts.`));
     console.log(chalk.dim('\nManual intervention required. See:'));
     console.log(chalk.cyan(`  ${path.join(getProjectPhasesDir(), 'phases', `phase-${phaseNumber}`, 'BLOCKED.md')}`));
+    if (isAutoMode) throw new Error(`Phase ${phaseNumber} is blocked`);
     return;
   }
   

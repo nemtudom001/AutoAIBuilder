@@ -243,31 +243,35 @@ export async function refineCommand(idea: string, options: RefineOptions): Promi
       console.log(chalk.magenta('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
       console.log(chalk.dim('Full automation enabled. Running all phases sequentially...\n'));
       
-      for (let i = 1; i <= phases.length; i++) {
-        const currentPhase = phases.find(p => p.phase_number === i);
-        if (!currentPhase) continue;
+      // Sort phases by phase_number and iterate over them directly
+      const sortedPhases = [...phases].sort((a, b) => a.phase_number - b.phase_number);
+      
+      for (let idx = 0; idx < sortedPhases.length; idx++) {
+        const currentPhase = sortedPhases[idx];
+        const phaseNum = currentPhase.phase_number;
         
-        console.log(chalk.cyan(`\n▶ Starting Phase ${i}/${phases.length}: ${currentPhase.name}\n`));
+        console.log(chalk.cyan(`\n▶ Starting Phase ${idx + 1}/${sortedPhases.length}: ${currentPhase.name}\n`));
         
         try {
-          await runCommand({ phase: String(i), auto: true });
+          // runCommand with auto:true will return instead of process.exit
+          await runCommand({ phase: String(phaseNum), auto: true });
           
           // Check if phase completed or blocked
           const updatedState = await loadProjectState();
-          const updatedPhase = updatedState?.phases.find(p => p.phase_number === i);
+          const updatedPhase = updatedState?.phases.find(p => p.phase_number === phaseNum);
           
           if (updatedPhase?.status === 'blocked') {
-            console.log(chalk.red(`\n⛔ Phase ${i} is blocked. Stopping auto-run.`));
-            console.log(chalk.dim('Fix the issue and run: ai-phases run --phase ' + i));
+            console.log(chalk.red(`\n⛔ Phase ${phaseNum} is blocked. Stopping auto-run.`));
+            console.log(chalk.dim('Fix the issue and run: ai-phases run --phase ' + phaseNum));
             break;
           }
           
           if (updatedPhase?.status !== 'completed') {
-            console.log(chalk.yellow(`\n⚠️  Phase ${i} did not complete successfully. Stopping auto-run.`));
+            console.log(chalk.yellow(`\n⚠️  Phase ${phaseNum} did not complete successfully. Stopping auto-run.`));
             break;
           }
         } catch (error) {
-          console.log(chalk.red(`\n✗ Phase ${i} encountered an error. Stopping auto-run.`));
+          console.log(chalk.red(`\n✗ Phase ${phaseNum} encountered an error. Stopping auto-run.`));
           console.log(chalk.dim(error instanceof Error ? error.message : 'Unknown error'));
           break;
         }
@@ -308,12 +312,17 @@ function parsePhasePlan(planContent: string, maxAttempts: number): PhaseState[] 
   // Split content by phase headers to get each phase section
   const phaseSections = planContent.split(/(?=##\s*Phase\s*\d+:)/i);
   
+  // Track sequential phase number (always start from 1)
+  let sequentialPhaseNum = 0;
+  
   for (const section of phaseSections) {
     // Match the phase header to get number and name
     const headerMatch = section.match(/##\s*Phase\s*(\d+):\s*(.+)/i);
     if (!headerMatch) continue;
     
-    const phaseNumber = parseInt(headerMatch[1], 10);
+    // Increment sequential counter - this ensures phases are always 1, 2, 3...
+    sequentialPhaseNum++;
+    const phaseNumber = sequentialPhaseNum;
     const phaseName = headerMatch[2].trim();
     const phaseContent = section;
     
