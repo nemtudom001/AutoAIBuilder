@@ -348,10 +348,68 @@ export async function markAttemptCompleted(
   attemptState.files_modified = filesModified;
   
   await saveAttemptState(phaseNumber, attemptNumber, attemptState);
-  await updatePhaseState(phaseNumber, { 
-    status: 'completed',
-    completed_at: new Date().toISOString()
-  });
+  
+  // Mark all tasks in this phase as completed
+  const phase = await loadPhaseState(phaseNumber);
+  if (phase) {
+    const completedTasks = phase.tasks.map(task => ({
+      ...task,
+      status: 'completed' as const,
+    }));
+    
+    await updatePhaseState(phaseNumber, { 
+      status: 'completed',
+      completed_at: new Date().toISOString(),
+      tasks: completedTasks,
+    });
+  } else {
+    await updatePhaseState(phaseNumber, { 
+      status: 'completed',
+      completed_at: new Date().toISOString()
+    });
+  }
+}
+
+/**
+ * Mark specific tasks as completed within a phase
+ * Useful for partial completions or tracking progress during execution
+ */
+export async function markTasksCompleted(
+  phaseNumber: number,
+  taskIds: string[]
+): Promise<void> {
+  const phase = await loadPhaseState(phaseNumber);
+  if (!phase) throw new Error(`Phase ${phaseNumber} not found`);
+  
+  const updatedTasks = phase.tasks.map(task => ({
+    ...task,
+    status: taskIds.includes(task.id) ? 'completed' as const : task.status,
+  }));
+  
+  await updatePhaseState(phaseNumber, { tasks: updatedTasks });
+}
+
+/**
+ * Get completed tasks from all previous phases
+ * Useful for AI to know what's already done
+ */
+export async function getCompletedTasksSummary(): Promise<string> {
+  const state = await loadProjectState();
+  if (!state) return 'No project state found';
+  
+  const completedPhases = state.phases.filter(p => p.status === 'completed');
+  
+  if (completedPhases.length === 0) {
+    return 'No phases completed yet.';
+  }
+  
+  const summary = completedPhases.map(phase => {
+    const completedTasks = phase.tasks.filter(t => t.status === 'completed');
+    return `## Phase ${phase.phase_number}: ${phase.name} ✓
+${completedTasks.map(t => `- [x] ${t.description}`).join('\n')}`;
+  }).join('\n\n');
+  
+  return summary;
 }
 
 export async function getPhaseDirectory(phaseNumber: number): Promise<string> {

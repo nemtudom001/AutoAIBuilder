@@ -1,7 +1,7 @@
 import fs from 'fs-extra';
 import path from 'path';
 import { loadGlobalConfig, type GlobalConfig } from './config-manager.js';
-import { loadProjectState, type PhaseState, type ProjectState } from './state-manager.js';
+import { loadProjectState, type PhaseState, type ProjectState, getCompletedTasksSummary } from './state-manager.js';
 import { getProjectPhasesDir } from './config-manager.js';
 import { getLibraryDocs, detectProjectLibraries } from './docs-provider.js';
 
@@ -413,9 +413,27 @@ This is the first phase. No previous context to load.
 `;
   }
 
-  // Add tasks for THIS phase only
-  prompt += `## Tasks
-${phase.tasks.map((t, i) => `${i + 1}. ${t.description}`).join('\n')}
+  // Add completed tasks from previous phases (so AI knows what's done)
+  if (phase.phase_number > 1) {
+    const completedSummary = await getCompletedTasksSummary();
+    if (completedSummary && !completedSummary.includes('No phases completed')) {
+      prompt += `## ✅ Already Completed (Previous Phases)
+These tasks are DONE - do NOT redo them:
+${completedSummary}
+
+`;
+    }
+  }
+
+  // Add tasks for THIS phase only - show status
+  prompt += `## 📋 Tasks for THIS Phase
+${phase.tasks.map((t, i) => {
+    const statusIcon = t.status === 'completed' ? '✓' : t.status === 'in_progress' ? '⏳' : '○';
+    const statusNote = t.status === 'completed' ? ' (DONE - skip)' : '';
+    return `${statusIcon} ${i + 1}. ${t.description}${statusNote}`;
+  }).join('\n')}
+
+**Focus on tasks marked with ○ (pending). Skip tasks marked with ✓ (completed).**
 
 `;
 

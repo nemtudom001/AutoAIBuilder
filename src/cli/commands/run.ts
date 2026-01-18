@@ -882,6 +882,10 @@ async function generateAutoHandover(
     }
   }
   
+  // Get task completion status
+  const completedTasks = phase?.tasks.filter(t => t.status === 'completed') || [];
+  const allTasksCompleted = phase?.tasks.length === completedTasks.length;
+  
   const handoverPrompt = `You MUST generate a COMPREHENSIVE handover document for Phase ${phaseNumber}.
 
 This handover is CRITICAL - it is the ONLY context the next AI agent will have about what was built.
@@ -890,8 +894,10 @@ If you skip details, the next phase WILL FAIL because the AI won't know what exi
 ## Phase ${phaseNumber} Information
 - **Name**: ${phase?.name || 'Unknown'}
 - **Description**: ${phase?.description || 'Unknown'}
-- **Tasks Completed**: 
-${phase?.tasks.map(t => `  - ${t.description}`).join('\n') || 'Unknown'}
+- **Status**: ${allTasksCompleted ? 'ALL TASKS COMPLETED ✓' : 'Some tasks may be incomplete'}
+
+## Tasks and Their Status
+${phase?.tasks.map(t => `- [${t.status === 'completed' ? 'x' : ' '}] ${t.description} (${t.status})`).join('\n') || 'Unknown'}
 
 ## Phase Output (What the AI did)
 ${output.substring(0, 6000)}${output.length > 6000 ? '\n...(truncated)' : ''}
@@ -1008,8 +1014,8 @@ Please review and enhance if needed.
 - **Name**: ${phase?.name || 'Unknown'}
 - **Description**: ${phase?.description || 'Unknown'}
 
-## 📋 Tasks That Were Attempted
-${phase?.tasks.map((t: any, i: number) => `${i + 1}. ${t.description}`).join('\n') || 'Unknown'}
+## 📋 Tasks and Status
+${phase?.tasks.map((t: any, i: number) => `- [${t.status === 'completed' ? 'x' : ' '}] ${t.description} (${t.status})`).join('\n') || 'Unknown'}
 
 ## 📁 Files Modified
 ${filesModified.map(f => `- \`${f}\``).join('\n') || 'No files recorded'}
