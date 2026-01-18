@@ -20,6 +20,7 @@ interface InitOptions {
   ui?: string;
   design?: string;
   fromIdea?: string;
+  yes?: boolean; // Non-interactive mode
 }
 
 export async function initCommand(options: InitOptions): Promise<void> {
@@ -32,7 +33,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
   
   // Check if already initialized
   const existingConfig = await loadProjectConfig();
-  if (existingConfig) {
+  if (existingConfig && !options.yes) {
     const { overwrite } = await inquirer.prompt([
       {
         type: 'confirm',
@@ -63,28 +64,40 @@ export async function initCommand(options: InitOptions): Promise<void> {
   // Gather project info
   const projectName = path.basename(process.cwd());
   
-  const answers = await inquirer.prompt([
-    {
-      type: 'input',
-      name: 'name',
-      message: 'Project name:',
-      default: projectName,
-    },
-    {
-      type: 'list',
-      name: 'ui_library',
-      message: 'UI library:',
-      choices: ['shadcn', 'radix', 'chakra', 'none'],
-      default: options.ui || globalConfig.defaults.ui_library,
-    },
-    {
-      type: 'list',
-      name: 'design_system',
-      message: 'Design principles:',
-      choices: ['vercel', 'apple', 'material', 'custom'],
-      default: options.design || globalConfig.defaults.design_system,
-    },
-  ]);
+  // Non-interactive mode: use defaults
+  let answers: { name: string; ui_library: string; design_system: string };
+  
+  if (options.yes) {
+    answers = {
+      name: projectName,
+      ui_library: options.ui || globalConfig.defaults.ui_library,
+      design_system: options.design || globalConfig.defaults.design_system,
+    };
+    console.log(chalk.dim(`Using defaults: ${answers.name}, ${answers.ui_library}, ${answers.design_system}`));
+  } else {
+    answers = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'name',
+        message: 'Project name:',
+        default: projectName,
+      },
+      {
+        type: 'list',
+        name: 'ui_library',
+        message: 'UI library:',
+        choices: ['shadcn', 'radix', 'chakra', 'none'],
+        default: options.ui || globalConfig.defaults.ui_library,
+      },
+      {
+        type: 'list',
+        name: 'design_system',
+        message: 'Design principles:',
+        choices: ['vercel', 'apple', 'material', 'custom'],
+        default: options.design || globalConfig.defaults.design_system,
+      },
+    ]);
+  }
   
   const spinner = ora('Setting up project structure...').start();
   

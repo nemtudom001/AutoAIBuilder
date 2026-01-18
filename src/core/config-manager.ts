@@ -91,7 +91,7 @@ export function getDefaultGlobalConfig(): GlobalConfig {
     setup_complete: false,
     cursor: {
       enabled: true,
-      planning_model: 'claude-opus-4.5',
+      planning_model: 'opus-4.5',
       execution_model: 'gemini-3-flash',
       context7_enabled: false,
     },
@@ -247,7 +247,7 @@ export async function runSetupWizard(): Promise<GlobalConfig> {
     setup_complete: true,
     cursor: {
       enabled: true,
-      planning_model: 'claude-opus-4.5',
+      planning_model: 'opus-4.5',
       execution_model: 'gemini-3-flash',
       context7_enabled: answers.context7_enabled,
     },

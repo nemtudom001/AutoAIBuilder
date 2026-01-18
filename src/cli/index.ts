@@ -34,6 +34,7 @@ program
   .option('--ui <library>', 'UI library (shadcn)', 'shadcn')
   .option('--design <system>', 'Design system (vercel)', 'vercel')
   .option('--from-idea <idea>', 'Initialize from a project idea')
+  .option('-y, --yes', 'Non-interactive mode, use defaults')
   .action(initCommand);
 
 // Refine command - the magic prompt enhancement chain

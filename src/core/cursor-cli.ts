@@ -89,15 +89,21 @@ export async function runCursorAgent(options: CursorCliOptions): Promise<CursorC
     let output = '';
     let errorOutput = '';
     
-    // Build shell command - use $(cat file) to pass prompt since cursor-agent
-    // doesn't have a --file flag. The @file syntax only works in Cursor IDE, not CLI.
-    const escapedPath = promptFile.replace(/'/g, "'\\''");
-    const command = `cursor-agent -p -f --model "${model}" --output-format text -- "$(cat '${escapedPath}')"`;
+    // Pass prompt directly as argument to cursor-agent
+    // Using spawn with args array avoids shell escaping issues
+    const args = [
+      '-p',
+      '-f', 
+      '--model', model,
+      '--output-format', 'text',
+      '--',
+      options.prompt,
+    ];
     
-    const child = spawn('sh', ['-c', command], {
+    const child = spawn('cursor-agent', args, {
       cwd: workingDir,
       env: process.env,
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio: ['ignore', 'pipe', 'pipe'], // ignore stdin to prevent blocking
     });
     
     const timeoutId = setTimeout(() => {
@@ -194,7 +200,7 @@ export async function runCursorAgentWithProgress(
  */
 export async function runPlanningTask(prompt: string, workingDir?: string): Promise<CursorCliResult> {
   const config = await loadGlobalConfig();
-  const model = config?.cursor?.planning_model || 'claude-opus-4.5';
+  const model = config?.cursor?.planning_model || 'opus-4.5';
   
   return runCursorAgent({
     prompt,

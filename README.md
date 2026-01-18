@@ -156,7 +156,7 @@ Global config stored at: `~/.ai-phase-builder/config.json`
 ```json
 {
   "cursor": {
-    "planning_model": "claude-opus-4.5",
+    "planning_model": "opus-4.5",
     "execution_model": "gemini-3-flash",
     "context7_enabled": true
   },

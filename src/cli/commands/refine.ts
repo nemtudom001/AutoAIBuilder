@@ -238,14 +238,17 @@ export async function refineCommand(idea: string, options: RefineOptions): Promi
 function parsePhasePlan(planContent: string, maxAttempts: number): PhaseState[] {
   const phases: PhaseState[] = [];
   
-  // Split by phase headers (## Phase N: Name)
-  const phaseRegex = /##\s*Phase\s*(\d+):\s*(.+?)(?=##\s*Phase|\n##\s*Summary|$)/gis;
-  const matches = [...planContent.matchAll(phaseRegex)];
+  // Split content by phase headers to get each phase section
+  const phaseSections = planContent.split(/(?=##\s*Phase\s*\d+:)/i);
   
-  for (const match of matches) {
-    const phaseNumber = parseInt(match[1], 10);
-    const phaseName = match[2].trim();
-    const phaseContent = match[0];
+  for (const section of phaseSections) {
+    // Match the phase header to get number and name
+    const headerMatch = section.match(/##\s*Phase\s*(\d+):\s*(.+)/i);
+    if (!headerMatch) continue;
+    
+    const phaseNumber = parseInt(headerMatch[1], 10);
+    const phaseName = headerMatch[2].trim();
+    const phaseContent = section;
     
     // Extract description
     const descMatch = phaseContent.match(/\*\*Description\*\*:\s*(.+?)(?=\*\*|\n###|$)/is);
@@ -279,12 +282,14 @@ function parsePhasePlan(planContent: string, maxAttempts: number): PhaseState[] 
     
     // Extract Context7 queries
     const context7Queries: string[] = [];
-    const context7Section = phaseContent.match(/###\s*Context7\s*Queries\s*([\s\S]*?)(?=###|##|$)/i);
+    const context7Section = phaseContent.match(/###\s*Context7\s*Queries\s*([\s\S]*?)(?=###|##|---|\n\n\n|$)/i);
     if (context7Section) {
-      const queryLines = context7Section[1].match(/^-\s*(.+)$/gm) || [];
+      const queryLines = context7Section[1].match(/^-\s*\*\*[^*]+\*\*:.+$/gm) || [];
       queryLines.forEach(line => {
         const query = line.replace(/^-\s*/, '').trim();
-        context7Queries.push(query);
+        if (query && query !== '---') {
+          context7Queries.push(query);
+        }
       });
     }
     
