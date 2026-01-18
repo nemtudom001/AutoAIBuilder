@@ -399,7 +399,7 @@ ${getUILibraryRequirements(config.defaults.ui_library)}
 
 `;
 
-  // If retry, add ONLY the failure context (not full history)
+  // If retry, add failure context with specific guidance
   if (phase.current_attempt > 0) {
     const failureReportPath = path.join(
       getProjectPhasesDir(),
@@ -411,12 +411,23 @@ ${getUILibraryRequirements(config.defaults.ui_library)}
     
     if (await fs.pathExists(failureReportPath)) {
       const failureReport = await fs.readFile(failureReportPath, 'utf-8');
-      prompt += `## ⚠️ Retry Attempt ${phase.current_attempt + 1}/${phase.max_attempts}
+      prompt += `## ⚠️ RETRY ATTEMPT ${phase.current_attempt + 1}/${phase.max_attempts} - READ CAREFULLY
 
-### What Failed Last Time
+### Previous Attempt Failed - Here's What Went Wrong:
 ${summarizeForContext(failureReport)}
 
-**Fix the above issues before proceeding.**
+### MANDATORY: Before Writing Any Code
+1. **Understand the error** - Read the failure report above carefully
+2. **Identify the root cause** - Don't just patch symptoms
+3. **Check the specific file and line** - The error tells you exactly where
+4. **Use Context7 if needed** - Look up correct API usage for the libraries involved
+
+### Common Fixes:
+- **TypeScript errors**: Check types match exactly what the library expects
+- **Import errors**: Verify package is installed and path is correct
+- **Build errors**: Fix ALL errors, not just the first one
+
+**You MUST fix the specific issues mentioned above. Do not repeat the same mistake.**
 
 `;
     }

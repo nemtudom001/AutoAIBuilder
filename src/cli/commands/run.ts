@@ -258,12 +258,13 @@ async function handlePhaseCompleted(
           }
         });
         
-        // Mark as failed due to validation
+        // Mark as failed due to validation with detailed error context
+        const errorDetails = validationResult.failures.map(f => `- ${f.command}: ${f.error}`).join('\n');
         await markAttemptFailed(
           phaseNumber,
           attemptNumber,
-          `Validation commands failed:\n${validationResult.failures.map(f => `- ${f.command}: ${f.error}`).join('\n')}`,
-          'Fix the validation errors and retry'
+          `Validation commands failed:\n${errorDetails}`,
+          `Review the error output above and fix the specific issues before retrying.`
         );
         
         const remainingAttempts = (phase?.max_attempts || 3) - attemptNumber;

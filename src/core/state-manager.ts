@@ -2,6 +2,75 @@ import fs from 'fs-extra';
 import path from 'path';
 import { getProjectPhasesDir } from './config-manager.js';
 
+/**
+ * Generate smart fix suggestions based on error analysis
+ */
+function generateSmartFixSuggestion(errorSummary: string, defaultFix: string): string {
+  const suggestions: string[] = [];
+  const errorLower = errorSummary.toLowerCase();
+  
+  // TypeScript type errors
+  if (errorLower.includes('type error') || errorLower.includes('is not assignable to type')) {
+    suggestions.push('**TypeScript Type Error Detected**');
+    
+    if (errorLower.includes('ease') && errorLower.includes('easing')) {
+      suggestions.push('- The `ease` property needs a typed value, not a string');
+      suggestions.push('- Use: `ease: [0.4, 0, 0.2, 1]` instead of `ease: "easeOut"`');
+      suggestions.push('- Or use: `ease: "easeOut" as const`');
+    }
+    if (errorLower.includes('variants')) {
+      suggestions.push('- Framer Motion Variants type issue');
+      suggestions.push('- Ensure transition properties match the expected types');
+      suggestions.push('- Check motion/react documentation for correct typing');
+    }
+    if (errorLower.includes('property') && errorLower.includes('does not exist')) {
+      suggestions.push('- A property is being accessed that TypeScript doesn\'t know about');
+      suggestions.push('- Check if the import is correct');
+      suggestions.push('- Verify the object/component has the property you\'re using');
+    }
+    suggestions.push('- Run `npm run build` locally to see full error details');
+  }
+  
+  // Module/Import errors
+  if (errorLower.includes('cannot find module') || errorLower.includes('module not found')) {
+    suggestions.push('**Module Not Found Error**');
+    suggestions.push('- Check if the package is installed: `npm install <package>`');
+    suggestions.push('- Verify the import path is correct');
+    suggestions.push('- For shadcn components: `npx shadcn@latest add <component>`');
+  }
+  
+  // Tailwind CSS errors
+  if (errorLower.includes('tailwind') || errorLower.includes('unknown utility class')) {
+    suggestions.push('**Tailwind CSS Error**');
+    suggestions.push('- Do NOT use `@apply` with CSS variable-based utilities');
+    suggestions.push('- Use inline Tailwind classes instead');
+    suggestions.push('- Check that tailwind.config.ts has the correct content paths');
+  }
+  
+  // Build errors
+  if (errorLower.includes('failed to compile') || errorLower.includes('build failed')) {
+    suggestions.push('**Build Failure**');
+    suggestions.push('- Fix all TypeScript/syntax errors before proceeding');
+    suggestions.push('- Check the specific file and line number in the error');
+    suggestions.push('- Ensure all imports resolve correctly');
+  }
+  
+  // Syntax errors
+  if (errorLower.includes('syntax error') || errorLower.includes('unexpected token')) {
+    suggestions.push('**Syntax Error**');
+    suggestions.push('- Check for missing brackets, parentheses, or semicolons');
+    suggestions.push('- Verify JSX is properly closed');
+    suggestions.push('- Look at the line number mentioned in the error');
+  }
+  
+  // If no specific suggestions, use default
+  if (suggestions.length === 0) {
+    return defaultFix;
+  }
+  
+  return suggestions.join('\n');
+}
+
 export interface PhaseTask {
   id: string;
   description: string;
@@ -176,9 +245,15 @@ export async function markAttemptFailed(
   attemptState.status = 'failed';
   attemptState.completed_at = new Date().toISOString();
   attemptState.error_summary = errorSummary;
-  attemptState.suggested_fix = suggestedFix;
+  
+  // Generate smart fix suggestions based on error type
+  const smartFix = generateSmartFixSuggestion(errorSummary, suggestedFix);
+  attemptState.suggested_fix = smartFix;
   
   await saveAttemptState(phaseNumber, attemptNumber, attemptState);
+  
+  // Load phase to get context
+  const phase = await loadPhaseState(phaseNumber);
   
   // Save failure report
   const failureReportPath = path.join(
@@ -194,23 +269,28 @@ export async function markAttemptFailed(
 ## Date
 ${new Date().toISOString()}
 
-## What Was Attempted
-[Details from the attempt]
+## Phase Details
+- **Name**: ${phase?.name || 'Unknown'}
+- **Tasks Attempted**: ${phase?.tasks.map(t => t.description).join(', ') || 'Unknown'}
 
 ## Why It Failed
 ${errorSummary}
 
-## Suggested Fix for Next Attempt
-${suggestedFix}
+## SPECIFIC Fix Instructions for Next Attempt
+${smartFix}
 
 ## Files Modified During This Attempt
 ${attemptState.files_modified.map(f => `- ${f}`).join('\n') || 'None recorded'}
+
+## Technical Notes
+- If this is a TypeScript error, check the exact types expected
+- If this is a build error, ensure all imports are correct
+- If this is a validation error, check the validation commands match actual code
 `;
   
   await fs.writeFile(failureReportPath, failureReport);
   
-  // Check if max attempts reached
-  const phase = await loadPhaseState(phaseNumber);
+  // Check if max attempts reached (use already loaded phase)
   if (phase && phase.current_attempt >= phase.max_attempts) {
     await updatePhaseState(phaseNumber, { status: 'blocked' });
     
