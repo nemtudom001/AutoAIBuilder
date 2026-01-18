@@ -80,23 +80,21 @@ export async function runCursorAgent(options: CursorCliOptions): Promise<CursorC
   const timeout = options.timeout || 300000; // 5 minute default
   const workingDir = options.workingDir || process.cwd();
   
-  // Save prompt to a temp file to avoid shell escaping issues
+  // Save prompt to a temp file for long prompts
   const promptFile = path.join(getProjectPhasesDir(), '.temp-prompt.md');
+  await fs.ensureDir(path.dirname(promptFile));
   await fs.writeFile(promptFile, options.prompt);
   
   return new Promise((resolve) => {
-    const args = [
-      '-p', // headless/print mode
-      `@${promptFile}`, // read prompt from file
-      '--model', model,
-      '--output-format', 'text',
-      '--force', // apply changes without manual confirmation
-    ];
-    
     let output = '';
     let errorOutput = '';
     
-    const child = spawn('cursor-agent', args, {
+    // Build shell command - use $(cat file) to pass prompt since cursor-agent
+    // doesn't have a --file flag. The @file syntax only works in Cursor IDE, not CLI.
+    const escapedPath = promptFile.replace(/'/g, "'\\''");
+    const command = `cursor-agent -p -f --model "${model}" --output-format text "$(cat '${escapedPath}')"`;
+    
+    const child = spawn('sh', ['-c', command], {
       cwd: workingDir,
       env: process.env,
       stdio: ['pipe', 'pipe', 'pipe'],
