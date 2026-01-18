@@ -4,7 +4,7 @@
   "description": "AI-powered project phase orchestration for Cursor IDE. Transform ideas into structured development phases with intelligent handovers, rollback support, and Context7 integration.",
   "main": "dist/index.js",
   "bin": {
-    "ai-phases": "./dist/cli/index.js"
+    "ai-phases": "dist/cli/index.js"
   },
   "type": "module",
   "scripts": {
