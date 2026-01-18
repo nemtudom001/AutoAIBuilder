@@ -226,6 +226,18 @@ export async function runCommand(options: RunOptions): Promise<void> {
   if (result.success) {
     spinner.succeed(`Phase ${phaseNumber} completed in ${elapsed}s`);
     await handlePhaseCompleted(phaseNumber, attempt.attempt_number, globalConfig, result);
+    
+    // Auto-continue to next phase if enabled
+    if (globalConfig.defaults.auto_run_phases) {
+      const updatedState = await loadProjectState();
+      if (updatedState && updatedState.status !== 'completed') {
+        const nextPhase = updatedState.phases.find(p => p.status === 'pending');
+        if (nextPhase) {
+          console.log(chalk.cyan(`\n▶ Auto-continuing to Phase ${nextPhase.phase_number}: ${nextPhase.name}\n`));
+          await runCommand({ phase: String(nextPhase.phase_number), auto: isAutoMode });
+        }
+      }
+    }
   } else {
     spinner.fail(`Phase ${phaseNumber} failed after ${elapsed}s`);
     await handlePhaseFailed(phaseNumber, attempt.attempt_number, phase.max_attempts, result.error || 'Unknown error');
