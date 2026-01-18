@@ -23,12 +23,57 @@ interface InitOptions {
   yes?: boolean; // Non-interactive mode
 }
 
+const CURRENT_CONFIG_VERSION = '1.5.0';
+
+function isConfigOutdated(version: string | undefined): boolean {
+  if (!version) return true;
+  
+  // Compare major.minor versions
+  const current = CURRENT_CONFIG_VERSION.split('.').map(Number);
+  const config = version.split('.').map(Number);
+  
+  // Outdated if major or minor version is lower
+  if (config[0] < current[0]) return true;
+  if (config[0] === current[0] && config[1] < current[1]) return true;
+  
+  return false;
+}
+
 export async function initCommand(options: InitOptions): Promise<void> {
   // Check for global config first
   let globalConfig = await loadGlobalConfig();
   
-  if (!globalConfig || !globalConfig.setup_complete) {
-    globalConfig = await runSetupWizard();
+  // Run setup wizard if no config, not complete, or outdated version
+  const needsSetup = !globalConfig || 
+    !globalConfig.setup_complete || 
+    isConfigOutdated(globalConfig.version);
+  
+  if (needsSetup) {
+    if (globalConfig?.setup_complete && isConfigOutdated(globalConfig.version)) {
+      console.log(chalk.yellow(`\n⚠️  Your configuration (v${globalConfig.version}) is outdated.`));
+      console.log(chalk.yellow(`   New version (v${CURRENT_CONFIG_VERSION}) has improved setup features.\n`));
+      
+      const { runUpdate } = await inquirer.prompt([
+        {
+          type: 'confirm',
+          name: 'runUpdate',
+          message: 'Run setup wizard to update your configuration?',
+          default: true,
+        },
+      ]);
+      
+      if (runUpdate) {
+        globalConfig = await runSetupWizard();
+      }
+    } else {
+      globalConfig = await runSetupWizard();
+    }
+  }
+  
+  // Ensure we have a config to continue
+  if (!globalConfig) {
+    console.log(chalk.red('Setup was not completed. Run: ai-phases config --setup'));
+    process.exit(1);
   }
   
   // Check if already initialized
