@@ -92,7 +92,7 @@ export async function runCursorAgent(options: CursorCliOptions): Promise<CursorC
     // Build shell command - use $(cat file) to pass prompt since cursor-agent
     // doesn't have a --file flag. The @file syntax only works in Cursor IDE, not CLI.
     const escapedPath = promptFile.replace(/'/g, "'\\''");
-    const command = `cursor-agent -p -f --model "${model}" --output-format text "$(cat '${escapedPath}')"`;
+    const command = `cursor-agent -p -f --model "${model}" --output-format text -- "$(cat '${escapedPath}')"`;
     
     const child = spawn('sh', ['-c', command], {
       cwd: workingDir,
