@@ -363,11 +363,76 @@ export async function getBaseCommit(): Promise<string> {
 }
 
 /**
+ * Get the path to gh executable, checking common install locations
+ */
+async function getGhPath(): Promise<string | null> {
+  const fs = await import('fs');
+  
+  // First try the PATH
+  try {
+    const checkCmd = process.platform === 'win32' ? 'where gh' : 'which gh';
+    const { stdout } = await execAsync(checkCmd, { timeout: 5000 });
+    if (stdout.trim()) {
+      return 'gh'; // Found in PATH
+    }
+  } catch {
+    // Not in PATH, check common locations
+  }
+  
+  // Windows: Check common installation paths
+  if (process.platform === 'win32') {
+    const windowsPaths = [
+      'C:\\Program Files\\GitHub CLI\\gh.exe',
+      'C:\\Program Files (x86)\\GitHub CLI\\gh.exe',
+      `${process.env.LOCALAPPDATA}\\Programs\\GitHub CLI\\gh.exe`,
+      `${process.env.USERPROFILE}\\AppData\\Local\\Programs\\GitHub CLI\\gh.exe`,
+      `${process.env.USERPROFILE}\\scoop\\shims\\gh.exe`,
+    ];
+    
+    for (const ghPath of windowsPaths) {
+      try {
+        if (fs.existsSync(ghPath)) {
+          return `"${ghPath}"`; // Quote path for spaces
+        }
+      } catch {
+        // Continue checking
+      }
+    }
+  }
+  
+  // macOS: Check Homebrew paths
+  if (process.platform === 'darwin') {
+    const macPaths = [
+      '/usr/local/bin/gh',
+      '/opt/homebrew/bin/gh',
+    ];
+    
+    for (const ghPath of macPaths) {
+      try {
+        if (fs.existsSync(ghPath)) {
+          return ghPath;
+        }
+      } catch {
+        // Continue checking
+      }
+    }
+  }
+  
+  return null;
+}
+
+/**
  * Check if gh CLI is installed and authenticated
  */
 export async function isGhCliReady(): Promise<boolean> {
+  const ghPath = await getGhPath();
+  
+  if (!ghPath) {
+    return false;
+  }
+  
   try {
-    await execAsync('gh auth status', { timeout: 5000 });
+    await execAsync(`${ghPath} auth status`, { timeout: 5000 });
     return true;
   } catch {
     return false;
@@ -446,11 +511,20 @@ export async function createGitHubRepo(
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '');
 
+  // Get the gh path
+  const ghPath = await getGhPath();
+  if (!ghPath) {
+    return {
+      success: false,
+      error: 'GitHub CLI not found',
+    };
+  }
+
   try {
     // Create repo on GitHub
     const visibilityFlag = visibility === 'private' ? '--private' : '--public';
     const { stdout } = await execAsync(
-      `gh repo create "${repoName}" ${visibilityFlag} --source=. --remote=origin --push`,
+      `${ghPath} repo create "${repoName}" ${visibilityFlag} --source=. --remote=origin --push`,
       { timeout: 60000 }
     );
 
@@ -465,7 +539,7 @@ export async function createGitHubRepo(
     if (error.message?.includes('already exists')) {
       // Try to set remote to existing repo
       try {
-        const { stdout: username } = await execAsync('gh api user -q .login');
+        const { stdout: username } = await execAsync(`${ghPath} api user -q .login`);
         const repoUrl = `https://github.com/${username.trim()}/${repoName}`;
         await execAsync(`git remote add origin ${repoUrl}`);
         await execAsync('git push -u origin main');
