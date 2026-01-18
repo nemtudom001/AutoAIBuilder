@@ -23,18 +23,21 @@ interface InitOptions {
   yes?: boolean; // Non-interactive mode
 }
 
-const CURRENT_CONFIG_VERSION = '1.6.2';
+const CURRENT_CONFIG_VERSION = '1.6.3';
 
 function isConfigOutdated(version: string | undefined): boolean {
   if (!version) return true;
   
-  // Compare major.minor versions
+  // Compare major.minor.patch versions
   const current = CURRENT_CONFIG_VERSION.split('.').map(Number);
   const config = version.split('.').map(Number);
   
-  // Outdated if major or minor version is lower
+  // Outdated if major version is lower
   if (config[0] < current[0]) return true;
+  // Outdated if same major but minor version is lower
   if (config[0] === current[0] && config[1] < current[1]) return true;
+  // Outdated if same major.minor but patch version is lower
+  if (config[0] === current[0] && config[1] === current[1] && (config[2] || 0) < (current[2] || 0)) return true;
   
   return false;
 }
