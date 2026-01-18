@@ -251,32 +251,100 @@ export async function runSetupWizard(): Promise<GlobalConfig> {
     
     if (!ghStatus.installed) {
       console.log(chalk.red('\n  ✗ GitHub CLI (gh) not found\n'));
-      console.log(chalk.white('  Install GitHub CLI first:'));
-      if (isWindows) {
-        console.log(chalk.cyan('    winget install --id GitHub.cli'));
-      } else if (process.platform === 'darwin') {
-        console.log(chalk.cyan('    brew install gh'));
-      } else {
-        console.log(chalk.cyan('    sudo apt install gh'));
-      }
-      console.log(chalk.dim('\n  Or download from: ') + chalk.cyan('https://cli.github.com/'));
-      console.log(chalk.yellow('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
       
-      const ghInstallAnswer = await inquirer.prompt([
+      // Offer to install automatically
+      let installCmd = '';
+      let installDescription = '';
+      
+      if (isWindows) {
+        installCmd = 'winget install --id GitHub.cli -e';
+        installDescription = 'winget (Windows Package Manager)';
+      } else if (process.platform === 'darwin') {
+        installCmd = 'brew install gh';
+        installDescription = 'Homebrew';
+      } else {
+        installCmd = 'sudo apt install gh -y';
+        installDescription = 'apt';
+      }
+      
+      console.log(chalk.white(`  We can install it automatically using ${installDescription}.\n`));
+      
+      const ghInstallChoice = await inquirer.prompt([
         {
-          type: 'confirm',
-          name: 'continue_anyway',
-          message: 'Continue setup without GitHub? (you can set it up later)',
-          default: true,
+          type: 'list',
+          name: 'action',
+          message: 'How would you like to proceed?',
+          choices: [
+            { name: `Install GitHub CLI now (${installCmd})`, value: 'install' },
+            { name: 'Skip GitHub integration (set up later)', value: 'skip' },
+            { name: 'Cancel setup', value: 'cancel' },
+          ],
         },
       ]);
       
-      if (!ghInstallAnswer.continue_anyway) {
-        console.log(chalk.dim('\nSetup cancelled. Install GitHub CLI first, then run:'));
-        console.log(chalk.cyan('  ai-phases config --setup\n'));
+      if (ghInstallChoice.action === 'cancel') {
+        console.log(chalk.dim('\nSetup cancelled. Run again with: ai-phases config --setup\n'));
         process.exit(1);
       }
-      console.log(chalk.yellow('\n  ⚠️  GitHub features disabled. You can enable later with: ai-phases config --setup\n'));
+      
+      if (ghInstallChoice.action === 'install') {
+        const installSpinner = ora('Installing GitHub CLI...').start();
+        const installSuccess = await runGitHubCliInstall(installCmd);
+        
+        if (installSuccess) {
+          installSpinner.succeed('GitHub CLI installed!');
+          // Re-check status
+          ghStatus = await checkGitHubCliStatus();
+          
+          if (ghStatus.installed) {
+            console.log(chalk.green('  ✓ GitHub CLI (gh) installed'));
+            
+            // Now authenticate
+            if (!ghStatus.authenticated) {
+              console.log(chalk.yellow('  ✗ Not authenticated with GitHub\n'));
+              console.log(chalk.white('  You need to authenticate to enable auto repo creation.'));
+              console.log(chalk.dim('  This will open your browser to sign in.\n'));
+              
+              const ghLoginAnswer = await inquirer.prompt([
+                {
+                  type: 'confirm',
+                  name: 'login_now',
+                  message: 'Login to GitHub now?',
+                  default: true,
+                },
+              ]);
+              
+              if (ghLoginAnswer.login_now) {
+                const ghLoginSpinner = ora('Opening browser for GitHub login...').start();
+                const ghLoginSuccess = await runGitHubLogin();
+                
+                if (ghLoginSuccess) {
+                  ghLoginSpinner.succeed('Logged in to GitHub!');
+                  ghStatus = await checkGitHubCliStatus();
+                  if (ghStatus.authenticated) {
+                    githubReady = true;
+                  }
+                } else {
+                  ghLoginSpinner.fail('GitHub login failed or was cancelled');
+                  console.log(chalk.yellow('\nYou can login later with: gh auth login\n'));
+                }
+              }
+            } else {
+              console.log(chalk.green('  ✓ Authenticated with GitHub'));
+              githubReady = true;
+            }
+          }
+        } else {
+          installSpinner.fail('GitHub CLI installation failed');
+          console.log(chalk.yellow('\n  Try installing manually:'));
+          console.log(chalk.cyan(`    ${installCmd}`));
+          console.log(chalk.dim('\n  Or download from: ') + chalk.cyan('https://cli.github.com/'));
+          console.log(chalk.yellow('\n  GitHub features will be disabled for now.\n'));
+        }
+      } else {
+        // User chose to skip
+        console.log(chalk.yellow('\n  ⚠️  GitHub features disabled. Enable later with: ai-phases config --setup\n'));
+      }
     } else {
       console.log(chalk.green('\n  ✓ GitHub CLI (gh) installed'));
       
@@ -418,7 +486,7 @@ export async function runSetupWizard(): Promise<GlobalConfig> {
   }>(automationPrompts);
 
   const config: GlobalConfig = {
-    version: '1.4.0',
+    version: '1.6.0',
     setup_complete: true,
     cursor: {
       enabled: true,
@@ -518,6 +586,39 @@ async function runGitHubLogin(): Promise<boolean> {
       child.kill();
       resolve(false);
     }, 180000);
+  });
+}
+
+/**
+ * Install GitHub CLI using system package manager
+ */
+async function runGitHubCliInstall(command: string): Promise<boolean> {
+  const { spawn } = await import('child_process');
+  
+  return new Promise((resolve) => {
+    // Parse the command
+    const parts = command.split(' ');
+    const cmd = parts[0];
+    const args = parts.slice(1);
+    
+    const child = spawn(cmd, args, {
+      stdio: 'inherit', // Show install progress to user
+      shell: true,
+    });
+    
+    child.on('close', (code) => {
+      resolve(code === 0);
+    });
+    
+    child.on('error', () => {
+      resolve(false);
+    });
+    
+    // Timeout after 5 minutes for installation
+    setTimeout(() => {
+      child.kill();
+      resolve(false);
+    }, 300000);
   });
 }
 
