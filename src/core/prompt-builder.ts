@@ -13,6 +13,46 @@ export interface GeneratedPrompt {
 }
 
 /**
+ * Generate mandatory UI library requirements based on selection
+ */
+function getUILibraryRequirements(uiLibrary: string): string {
+  switch (uiLibrary.toLowerCase()) {
+    case 'shadcn':
+      return `**UI Library: shadcn/ui (MANDATORY)**
+- You MUST use shadcn/ui for ALL UI components - this is NOT optional
+- Install with: \`npx shadcn@latest init\` (select "New York" style)
+- Add components with: \`npx shadcn@latest add [component]\`
+- REQUIRED components for most projects: button, card, input, form, sheet, dialog
+- ALL buttons must use \`<Button>\` from "@/components/ui/button"
+- ALL cards must use \`<Card>\` from "@/components/ui/card"
+- ALL forms must use shadcn Form with react-hook-form + zod
+- ALL modals/dialogs must use shadcn Dialog or Sheet
+- DO NOT use plain HTML elements (button, input) - use shadcn components instead
+- DO NOT install other UI libraries (MUI, Chakra, Ant Design, etc.)`;
+    case 'radix':
+      return `**UI Library: Radix UI (MANDATORY)**
+- You MUST use Radix UI primitives for ALL interactive components
+- Install primitives as needed: \`npm install @radix-ui/react-[component]\`
+- Style with Tailwind CSS classes
+- DO NOT use other UI libraries`;
+    case 'chakra':
+      return `**UI Library: Chakra UI (MANDATORY)**
+- You MUST use Chakra UI for ALL UI components
+- Install with: \`npm install @chakra-ui/react @emotion/react @emotion/styled framer-motion\`
+- Wrap app in \`<ChakraProvider>\`
+- ALL components must use Chakra components (Button, Box, Input, etc.)
+- DO NOT use other UI libraries`;
+    case 'none':
+      return `**UI Library: None (Custom/Tailwind only)**
+- Use only Tailwind CSS utility classes for styling
+- Build custom components as needed`;
+    default:
+      return `**UI Library: ${uiLibrary}**
+- Use ${uiLibrary} for UI components as specified`;
+  }
+}
+
+/**
  * Stage 1: Superprompt Enhancement
  * Takes a rough idea and expands it into a comprehensive specification
  */
@@ -45,9 +85,9 @@ Do NOT omit, simplify, or defer any of these features. They are core requirement
 - Output should be actionable, not theoretical
 - NEVER mark an explicitly requested feature as "out of scope" or "future enhancement"
 
-## Tech Stack Preferences
-- UI Library: ${config.defaults.ui_library}
-- Design System: ${config.defaults.design_system}
+## MANDATORY Tech Stack (Non-Negotiable)
+${getUILibraryRequirements(config.defaults.ui_library)}
+- Design System: ${config.defaults.design_system} style principles
 
 ## CRITICAL: Use Latest Versions
 Always specify the LATEST stable versions in setup tasks:
@@ -203,13 +243,18 @@ Validation criteria must be VERIFIABLE, not subjective:
 - ❌ Bad: "Code is clean and well-organized"
 - ❌ Bad: "UI looks good"
 
+## MANDATORY Tech Stack Rules
+${getUILibraryRequirements(config.defaults.ui_library)}
+
 ## Rules
+- Phase 1 MUST include UI library setup (shadcn/ui init if using shadcn)
 - Phase 1 should always be project foundation/setup
 - Keep phases focused (4-8 hours of work each)
 - Earlier phases should not depend on later phases
 - Include a final phase for polish and testing
 - Maximum 10 phases for any project
 - EVERY feature in the spec must appear in at least one phase's tasks
+- ALL UI components must use the specified UI library - no exceptions
 
 ## Output Format
 **CRITICAL INSTRUCTIONS - READ CAREFULLY:**
@@ -252,12 +297,20 @@ npm run lint
 
 **REMINDER: Do NOT use Write/Edit tools. Output the full plan as text in your response.**`;
 
+  // Build context7 lookups including the UI library
+  const context7Lookups = ['react', 'typescript'];
+  if (config.defaults.ui_library === 'shadcn') {
+    context7Lookups.push('shadcn/ui');
+  } else if (config.defaults.ui_library === 'chakra') {
+    context7Lookups.push('chakra-ui');
+  }
+  
   return {
     model: 'planning',
     modelName: config.cursor.planning_model,
     stage: 'Phase Structuring',
     prompt,
-    context7Lookups: ['react', 'typescript'], // Common for most web projects
+    context7Lookups,
   };
 }
 
@@ -317,10 +370,11 @@ ${phase.validation_criteria.map(c => `- [ ] ${c}`).join('\n')}
   // Context7 libraries to look up for this phase
   const context7Libraries = phase.context7_libraries || [];
 
-  // Minimal design constraints
-  prompt += `## Constraints
-- UI: ${config.defaults.ui_library}
-- Design: ${config.defaults.design_system}
+  // Mandatory design constraints
+  prompt += `## MANDATORY Constraints
+${getUILibraryRequirements(config.defaults.ui_library)}
+
+- Design: ${config.defaults.design_system} style principles
 - Follow existing codebase patterns
 
 ## CRITICAL Technical Requirements
