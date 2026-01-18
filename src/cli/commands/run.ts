@@ -43,6 +43,26 @@ import {
   isCursorCliInstalled,
   getInstallInstructions,
 } from '../../core/cursor-cli.js';
+import {
+  performSelfReview,
+  displaySelfReviewResults,
+  saveSelfReviewResults,
+} from '../../core/self-review.js';
+import {
+  analyzeDependencies,
+  preInstallDependencies,
+  displayDependencyCheck,
+} from '../../core/dependency-check.js';
+import {
+  createCheckpoint,
+  getCheckpoints,
+  getCheckpointRecoveryInfo,
+} from '../../core/checkpoint.js';
+import {
+  findMatchingFix,
+  recordSuccessfulFix,
+  applyKnownFix,
+} from '../../core/error-memory.js';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 
@@ -232,6 +252,22 @@ export async function runCommand(options: RunOptions): Promise<void> {
   const promptPath = await savePromptToFile(prompt, phaseNumber, attempt.attempt_number);
   console.log(chalk.dim('Prompt saved: ') + chalk.white(promptPath));
   
+  // === DEPENDENCY PRE-CHECK ===
+  // Analyze and pre-install dependencies before execution to prevent common errors
+  console.log(chalk.cyan('\n━━━ Pre-Execution Dependency Check ━━━\n'));
+  const depCheckResult = await analyzeDependencies(phase);
+  displayDependencyCheck(depCheckResult);
+  
+  if (depCheckResult.missingDependencies.length > 0 || depCheckResult.missingShadcnComponents.length > 0) {
+    const { installed, failed } = await preInstallDependencies(depCheckResult);
+    if (installed.length > 0) {
+      console.log(chalk.green(`✓ Pre-installed ${installed.length} dependencies to prevent errors\n`));
+    }
+    if (failed.length > 0) {
+      console.log(chalk.yellow(`⚠ ${failed.length} dependencies could not be pre-installed (AI will handle)\n`));
+    }
+  }
+  
   // Execute phase via cursor-agent
   console.log(chalk.yellow('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
   console.log(chalk.yellow.bold('  🚀 Executing Phase via Cursor CLI'));
@@ -386,6 +422,36 @@ async function handlePhaseCompleted(
              !f.startsWith('.ai-phases/');
     });
     
+    // === SELF-REVIEW BEFORE VALIDATION ===
+    // AI reviews its own work to catch obvious mistakes before running validation
+    spinner.text = 'Running AI self-review...';
+    const selfReviewResult = await performSelfReview(phase!, filesModified, result.output);
+    await saveSelfReviewResults(phaseNumber, attemptNumber, selfReviewResult);
+    
+    if (!selfReviewResult.passed) {
+      spinner.warn('Self-review found issues');
+      displaySelfReviewResults(selfReviewResult);
+      
+      // If there are critical issues, try to fix them before validation
+      const criticalIssues = selfReviewResult.issues.filter(i => i.severity === 'critical');
+      if (criticalIssues.length > 0) {
+        console.log(chalk.yellow('\n  Attempting to fix critical issues found in self-review...\n'));
+        // The AI will fix these in the validation fix loop
+      }
+    } else {
+      spinner.text = 'Self-review passed ✓';
+    }
+    
+    // === CREATE CHECKPOINT ===
+    // Save progress at this point in case validation fails
+    await createCheckpoint(
+      phaseNumber,
+      attemptNumber,
+      phase?.tasks.length || 0,
+      'Pre-validation checkpoint',
+      filesModified
+    );
+    
     // Run validation commands if any exist
     if (phase?.validation_commands && phase.validation_commands.length > 0) {
       spinner.text = 'Running validation checks...';
@@ -397,8 +463,27 @@ async function handlePhaseCompleted(
         aiFixAttempts++;
         spinner.warn(`Validation failed - attempting fix (${aiFixAttempts}/${MAX_AI_FIX_ATTEMPTS})...`);
         
-        // Attempt basic auto-fix first (npm installs, etc.)
+        // === CHECK ERROR MEMORY FIRST ===
+        // Look for known fixes before trying generic auto-fix
         const errorOutput = validationResult.failures.map(f => f.error || '').join('\n');
+        const knownFix = await findMatchingFix(errorOutput);
+        
+        if (knownFix) {
+          console.log(chalk.cyan(`\n  💡 Found known fix in error memory: ${knownFix.fixType}`));
+          const applied = await applyKnownFix(knownFix);
+          if (applied) {
+            console.log(chalk.green('  ✓ Applied known fix, re-validating...\n'));
+            validationResult = await runValidationCommands(phase.validation_commands);
+            if (validationResult.success) {
+              // Record success to increase confidence
+              await recordSuccessfulFix(errorOutput, knownFix.fix, knownFix.fixType);
+              console.log(chalk.green('✓ Validation passed using known fix!'));
+              break;
+            }
+          }
+        }
+        
+        // Attempt basic auto-fix (npm installs, etc.)
         const autoFixResult = await attemptAutoFix(errorOutput);
         
         if (autoFixResult.fixed) {
@@ -407,6 +492,15 @@ async function handlePhaseCompleted(
           validationResult = await runValidationCommands(phase.validation_commands);
           
           if (validationResult.success) {
+            // === RECORD SUCCESSFUL FIX IN ERROR MEMORY ===
+            for (const fix of autoFixResult.fixesApplied) {
+              await recordSuccessfulFix(
+                errorOutput,
+                fix,
+                fix.includes('npm install') ? 'npm_install' : 
+                fix.includes('shadcn') ? 'shadcn_add' : 'code_change'
+              );
+            }
             console.log(chalk.green('✓ Validation passed after auto-fixes!'));
             break;
           }
@@ -450,7 +544,18 @@ async function handlePhaseCompleted(
           
           if (fixResult.success) {
             console.log(chalk.green('✓ AI fix completed, re-validating...\n'));
+            const prevValidationResult = validationResult;
             validationResult = await runValidationCommands(phase.validation_commands);
+            
+            // If AI fix worked, record it in error memory
+            if (validationResult.success) {
+              await recordSuccessfulFix(
+                errorDetails,
+                'AI-driven code fix',
+                'code_change',
+                `Fixed during phase ${phaseNumber} attempt ${attemptNumber}`
+              );
+            }
           } else {
             console.log(chalk.red(`✗ AI fix failed: ${fixResult.error || 'Unknown error'}`));
           }
@@ -459,6 +564,8 @@ async function handlePhaseCompleted(
       
       // Final check - if still failing after all attempts
       if (!validationResult.success) {
+        // Include checkpoint recovery info in the error context
+        const checkpointInfo = await getCheckpointRecoveryInfo(phaseNumber, attemptNumber);
         spinner.fail('Validation failed after all fix attempts');
         console.log(chalk.red('\n━━━ Validation Failed ━━━\n'));
         console.log(chalk.dim('Failed commands:'));
@@ -474,21 +581,27 @@ async function handlePhaseCompleted(
           `- ${f.command}:\n${(f.error || 'Unknown error').split('\n').slice(0, 10).join('\n')}`
         ).join('\n\n');
         
+        // Show checkpoint recovery info
+        if (checkpointInfo && !checkpointInfo.includes('No checkpoints')) {
+          console.log(chalk.cyan('\n📍 Checkpoint Recovery Available:'));
+          console.log(chalk.dim(checkpointInfo.split('\n').slice(0, 5).join('\n')));
+        }
+        
         // Commit partial progress even on failure
         await commitPartialProgress(phaseNumber, attemptNumber, 'validation-failed');
         
-        // Mark as failed with detailed error context
+        // Mark as failed with detailed error context including checkpoint info
         await markAttemptFailed(
           phaseNumber,
           attemptNumber,
-          `Validation commands failed after ${aiFixAttempts} fix attempts:\n${errorDetails}`,
+          `Validation commands failed after ${aiFixAttempts} fix attempts:\n${errorDetails}\n\n${checkpointInfo}`,
           `AI could not automatically fix these errors. Manual intervention may be required.`
         );
         
         return {
           success: false,
           needsRetry: true,
-          errorContext: errorDetails,
+          errorContext: `${errorDetails}\n\n${checkpointInfo}`,
         };
       }
       
