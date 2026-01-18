@@ -203,20 +203,37 @@ export async function preInstallDependencies(
 
   // Install shadcn components
   if (result.missingShadcnComponents.length > 0) {
-    console.log(chalk.cyan('\n🎨 Pre-installing shadcn components...\n'));
+    // Check if shadcn is initialized (components.json exists)
+    const componentsJsonPath = path.join(projectDir, 'components.json');
+    const hasShadcnConfig = await fs.pathExists(componentsJsonPath);
     
-    for (const component of result.missingShadcnComponents) {
-      try {
-        console.log(chalk.dim(`  Adding ${component}...`));
-        await execAsync(`npx shadcn@latest add ${component} --yes`, { 
-          cwd: projectDir,
-          timeout: 60000 
-        });
-        installed.push(`shadcn:${component}`);
-        console.log(chalk.green(`  ✓ Added ${component}`));
-      } catch (error: any) {
-        failed.push(`shadcn:${component}`);
-        console.log(chalk.yellow(`  ⚠ Failed to add ${component}: ${error.message?.split('\n')[0]}`));
+    if (!hasShadcnConfig) {
+      console.log(chalk.yellow('\n⚠ shadcn not initialized (no components.json found)'));
+      console.log(chalk.dim('  Skipping shadcn component pre-installation.'));
+      console.log(chalk.dim('  The AI will run "npx shadcn@latest init" when needed.\n'));
+      // Don't mark as failed - the AI will handle initialization
+    } else {
+      console.log(chalk.cyan('\n🎨 Pre-installing shadcn components...\n'));
+      
+      for (const component of result.missingShadcnComponents) {
+        try {
+          console.log(chalk.dim(`  Adding ${component}...`));
+          // Use --yes to skip prompts and --overwrite to handle existing files
+          await execAsync(`npx shadcn@latest add ${component} --yes --overwrite`, { 
+            cwd: projectDir,
+            timeout: 120000 // 2 minutes - some components take time
+          });
+          installed.push(`shadcn:${component}`);
+          console.log(chalk.green(`  ✓ Added ${component}`));
+        } catch (error: any) {
+          failed.push(`shadcn:${component}`);
+          // Extract more useful error info
+          const stderr = error.stderr || error.message || 'Unknown error';
+          const errorLine = stderr.split('\n').find((line: string) => 
+            line.includes('Error') || line.includes('error') || line.includes('failed')
+          ) || stderr.split('\n')[0];
+          console.log(chalk.yellow(`  ⚠ Failed to add ${component}: ${errorLine.substring(0, 100)}`));
+        }
       }
     }
   }
