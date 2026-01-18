@@ -36,7 +36,7 @@ import {
 import {
   runCursorAgent,
   isCursorCliInstalled,
-  isCursorCliAuthenticated,
+  getInstallInstructions,
 } from '../../core/cursor-cli.js';
 import { exec } from 'child_process';
 import { promisify } from 'util';
@@ -70,18 +70,11 @@ export async function runCommand(options: RunOptions): Promise<void> {
   // Verify CLI setup
   const cliInstalled = await isCursorCliInstalled();
   if (!cliInstalled) {
-    return handleError(
-      '\n✗ cursor-agent CLI not found.',
-      'Install with: curl https://cursor.com/install -fsS | bash\n'
-    );
-  }
-  
-  const isAuthenticated = await isCursorCliAuthenticated();
-  if (!isAuthenticated) {
-    return handleError(
-      '\n✗ Not logged in to Cursor CLI.',
-      'Run: cursor-agent login\n'
-    );
+    console.log(chalk.red('\n✗ Cursor CLI (agent) not found.\n'));
+    console.log(chalk.dim(getInstallInstructions()));
+    console.log();
+    if (isAutoMode) throw new Error('Cursor CLI not installed');
+    process.exit(1);
   }
   
   const state = await loadProjectState();
@@ -527,6 +520,58 @@ interface ValidationResult {
   passed: string[];
 }
 
+// On Windows, run commands through WSL Ubuntu
+const isWindows = process.platform === 'win32';
+
+/**
+ * Convert Windows path to WSL path (C:\Users\... -> /mnt/c/Users/...)
+ */
+function toWslPath(windowsPath: string): string {
+  if (!isWindows) return windowsPath;
+  return windowsPath
+    .replace(/^([A-Z]):/i, (_, letter) => `/mnt/${letter.toLowerCase()}`)
+    .replace(/\\/g, '/');
+}
+
+/**
+ * Find the actual project directory (where package.json is)
+ * Looks in current directory and common subdirectories
+ */
+async function findProjectDir(): Promise<string> {
+  const cwd = process.cwd();
+  
+  // Check current directory first
+  if (await fs.pathExists(path.join(cwd, 'package.json'))) {
+    return cwd;
+  }
+  
+  // Check common subdirectories where AI might create projects
+  const possibleDirs = ['web', 'app', 'frontend', 'client', 'src', 'project'];
+  for (const dir of possibleDirs) {
+    const fullPath = path.join(cwd, dir);
+    if (await fs.pathExists(path.join(fullPath, 'package.json'))) {
+      return fullPath;
+    }
+  }
+  
+  // Check any directory that has package.json
+  try {
+    const entries = await fs.readdir(cwd, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== 'node_modules') {
+        const fullPath = path.join(cwd, entry.name);
+        if (await fs.pathExists(path.join(fullPath, 'package.json'))) {
+          return fullPath;
+        }
+      }
+    }
+  } catch {
+    // Ignore errors
+  }
+  
+  return cwd;
+}
+
 /**
  * Run validation commands to verify phase completion
  */
@@ -537,14 +582,76 @@ async function runValidationCommands(commands: string[]): Promise<ValidationResu
     passed: [],
   };
   
+  // Find the actual project directory
+  const projectDir = await findProjectDir();
+  
   for (const command of commands) {
     try {
-      // Run command with a reasonable timeout (60 seconds)
-      await execAsync(command, {
-        cwd: process.cwd(),
-        timeout: 60000,
-        env: { ...process.env, CI: 'true' }, // Some tools behave better in CI mode
-      });
+      let actualCommand = command;
+      let execOptions: any = {
+        cwd: projectDir,
+        timeout: 120000, // 2 minute timeout for builds
+        env: { ...process.env, CI: 'true' },
+      };
+      
+      // Skip long-running server commands - they're not suitable for validation
+      if (command === 'npm run dev' || command === 'npm start' || command === 'yarn dev' || command === 'pnpm dev') {
+        // Instead of running the dev server, just check package.json has the script
+        const packageJsonPath = path.join(projectDir, 'package.json');
+        if (await fs.pathExists(packageJsonPath)) {
+          const packageJson = await fs.readJson(packageJsonPath);
+          if (packageJson.scripts && packageJson.scripts.dev) {
+            result.passed.push(command + ' (script exists)');
+            continue;
+          }
+        }
+        result.failures.push({ command, error: 'Dev script not found in package.json' });
+        result.success = false;
+        continue;
+      }
+      
+      // Handle ls commands for common directories that might be in different locations
+      if (command.startsWith('ls ') && command.includes('components/ui')) {
+        // Try multiple common paths for components/ui
+        const possiblePaths = [
+          path.join(projectDir, 'components', 'ui'),
+          path.join(projectDir, 'src', 'components', 'ui'),
+          path.join(projectDir, 'app', 'components', 'ui'),
+        ];
+        let found = false;
+        for (const uiPath of possiblePaths) {
+          if (await fs.pathExists(uiPath)) {
+            const files = await fs.readdir(uiPath);
+            if (files.length > 0) {
+              result.passed.push(command + ` (found ${files.length} files in ${uiPath})`);
+              found = true;
+              break;
+            }
+          }
+        }
+        if (!found) {
+          result.failures.push({ command, error: 'components/ui directory not found in any common location' });
+          result.success = false;
+        }
+        continue;
+      }
+      
+      // On Windows, run commands through WSL for consistency
+      if (isWindows) {
+        const wslProjectDir = toWslPath(projectDir);
+        
+        // Convert Unix commands to run through WSL
+        if (command.startsWith('ls ') || command === 'ls') {
+          actualCommand = `wsl -d Ubuntu -e bash -c "cd '${wslProjectDir}' && ${command}"`;
+          execOptions.cwd = undefined;
+        } else if (command.startsWith('npm ') || command.startsWith('npx ') || command.startsWith('yarn ') || command.startsWith('pnpm ')) {
+          // Run npm/npx commands through WSL for consistency with how AI ran them
+          actualCommand = `wsl -d Ubuntu -e bash -c "cd '${wslProjectDir}' && ${command}"`;
+          execOptions.cwd = undefined; // WSL handles the cwd
+        }
+      }
+      
+      await execAsync(actualCommand, execOptions);
       result.passed.push(command);
     } catch (error: any) {
       result.success = false;

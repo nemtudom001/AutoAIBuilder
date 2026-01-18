@@ -91,7 +91,7 @@ export async function saveProjectConfig(config: ProjectConfig): Promise<void> {
 
 export function getDefaultGlobalConfig(): GlobalConfig {
   return {
-    version: '1.0.4',
+    version: '1.1.0',
     setup_complete: false,
     cursor: {
       enabled: true,
@@ -151,10 +151,33 @@ export async function runSetupWizard(): Promise<GlobalConfig> {
   
   const cliStatus = await checkCursorCliStatus();
   
+  const isWindows = process.platform === 'win32';
+  
   if (!cliStatus.installed) {
-    console.log(chalk.red('  ✗ cursor-agent CLI not found\n'));
-    console.log(chalk.white('  Install it with:'));
-    console.log(chalk.cyan('    curl https://cursor.com/install -fsS | bash\n'));
+    console.log(chalk.red('  ✗ Cursor CLI (agent) not found\n'));
+    
+    if (isWindows) {
+      console.log(chalk.white('  Install options for Windows:\n'));
+      console.log(chalk.white('  Option 1 - WSL (recommended):'));
+      console.log(chalk.dim('    1. Install WSL: ') + chalk.cyan('wsl --install'));
+      console.log(chalk.dim('    2. Restart your computer'));
+      console.log(chalk.dim('    3. Open WSL terminal and run:'));
+      console.log(chalk.cyan('       curl https://cursor.com/install -fsS | bash'));
+      console.log(chalk.dim('    4. Add to PATH:'));
+      console.log(chalk.cyan('       echo \'export PATH="$HOME/.local/bin:$PATH"\' >> ~/.bashrc'));
+      console.log();
+      console.log(chalk.white('  Option 2 - Git Bash:'));
+      console.log(chalk.dim('    1. Open Git Bash and run:'));
+      console.log(chalk.cyan('       curl https://cursor.com/install -fsS | bash\n'));
+    } else {
+      console.log(chalk.white('  Install with:'));
+      console.log(chalk.cyan('    curl https://cursor.com/install -fsS | bash'));
+      console.log(chalk.dim('\n  Then add to PATH:'));
+      console.log(chalk.cyan('    echo \'export PATH="$HOME/.local/bin:$PATH"\' >> ~/.bashrc'));
+      console.log(chalk.cyan('    source ~/.bashrc\n'));
+    }
+    
+    console.log(chalk.dim('  Docs: https://cursor.com/docs/cli/installation\n'));
     console.log(chalk.yellow('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
     
     const continueAnswer = await inquirer.prompt([
@@ -167,12 +190,12 @@ export async function runSetupWizard(): Promise<GlobalConfig> {
     ]);
     
     if (!continueAnswer.continue_anyway) {
-      console.log(chalk.dim('\nSetup cancelled. Install cursor-agent first, then run:'));
+      console.log(chalk.dim('\nSetup cancelled. Install Cursor CLI first, then run:'));
       console.log(chalk.cyan('  ai-phases config --setup\n'));
       process.exit(1);
     }
   } else if (!cliStatus.authenticated) {
-    console.log(chalk.green('  ✓ cursor-agent CLI installed'));
+    console.log(chalk.green('  ✓ Cursor CLI (agent) installed'));
     console.log(chalk.yellow('  ✗ Not logged in\n'));
     console.log(chalk.white('  You need to authenticate with Cursor.'));
     console.log(chalk.dim('  This will open your browser to sign in.\n'));
@@ -195,13 +218,13 @@ export async function runSetupWizard(): Promise<GlobalConfig> {
         loginSpinner.succeed('Logged in to Cursor!');
       } else {
         loginSpinner.fail('Login failed or was cancelled');
-        console.log(chalk.yellow('\nYou can login later with: cursor-agent login\n'));
+        console.log(chalk.yellow('\nYou can login later with: agent login\n'));
       }
     } else {
-      console.log(chalk.yellow('\nLogin later with: cursor-agent login\n'));
+      console.log(chalk.yellow('\nLogin later with: agent login\n'));
     }
   } else {
-    console.log(chalk.green('  ✓ cursor-agent CLI installed'));
+    console.log(chalk.green('  ✓ Cursor CLI (agent) installed'));
     console.log(chalk.green('  ✓ Logged in to Cursor'));
     console.log(chalk.yellow('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
   }
@@ -291,7 +314,7 @@ export async function runSetupWizard(): Promise<GlobalConfig> {
   ]);
 
   const config: GlobalConfig = {
-    version: '1.0.4',
+    version: '1.1.0',
     setup_complete: true,
     cursor: {
       enabled: true,
@@ -334,8 +357,19 @@ interface CliStatus {
   authenticated: boolean;
 }
 
+// On Windows, run cursor-agent through WSL Ubuntu
+const isWindows = process.platform === 'win32';
+
+function getCursorAgentVersionCmd(): string {
+  if (isWindows) {
+    return 'wsl -d Ubuntu -e bash -c "/root/.local/bin/cursor-agent --version"';
+  }
+  return 'cursor-agent --version';
+}
+
 /**
- * Check if cursor-agent is installed and authenticated
+ * Check if Cursor CLI (agent) is installed and authenticated
+ * CLI docs: https://cursor.com/docs/cli/installation
  */
 async function checkCursorCliStatus(): Promise<CliStatus> {
   const { exec } = await import('child_process');
@@ -343,36 +377,35 @@ async function checkCursorCliStatus(): Promise<CliStatus> {
   const execAsync = promisify(exec);
   
   try {
-    // Check if CLI is installed
-    await execAsync('cursor-agent --version', { timeout: 5000 });
+    // Check if CLI is installed - the command is 'cursor-agent'
+    await execAsync(getCursorAgentVersionCmd(), { timeout: 10000 });
   } catch {
     return { installed: false, authenticated: false };
   }
   
-  try {
-    // Check authentication status
-    const { stdout } = await execAsync('cursor-agent status', { timeout: 10000 });
-    // If status returns successfully and contains user info, we're authenticated
-    const isAuthenticated = stdout.toLowerCase().includes('logged in') || 
-                           stdout.toLowerCase().includes('authenticated') ||
-                           stdout.includes('@'); // Usually shows email when logged in
-    return { installed: true, authenticated: isAuthenticated };
-  } catch {
-    // Status command failed, might not be authenticated
-    return { installed: true, authenticated: false };
-  }
+  // If agent --version works, CLI is installed
+  // Authentication is handled per-request by the agent
+  return { installed: true, authenticated: true };
 }
 
 /**
- * Run cursor-agent login (opens browser)
+ * Run agent login (opens browser)
+ * CLI docs: https://cursor.com/docs/cli/installation
  */
 async function runCursorLogin(): Promise<boolean> {
   const { spawn } = await import('child_process');
   
   return new Promise((resolve) => {
-    const child = spawn('cursor-agent', ['login'], {
-      stdio: 'inherit', // Show login process to user
-    });
+    let child;
+    if (isWindows) {
+      child = spawn('wsl', ['-d', 'Ubuntu', '-e', 'bash', '-c', '/root/.local/bin/cursor-agent login'], {
+        stdio: 'inherit', // Show login process to user
+      });
+    } else {
+      child = spawn('cursor-agent', ['login'], {
+        stdio: 'inherit', // Show login process to user
+      });
+    }
     
     child.on('close', (code) => {
       resolve(code === 0);

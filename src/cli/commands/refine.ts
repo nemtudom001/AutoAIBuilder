@@ -18,10 +18,8 @@ import {
   savePromptToFile,
 } from '../../core/prompt-builder.js';
 import {
-  runCursorAgent,
   runPlanningTask,
   isCursorCliInstalled,
-  isCursorCliAuthenticated,
   extractMarkdown,
 } from '../../core/cursor-cli.js';
 import {
@@ -44,19 +42,13 @@ export async function refineCommand(idea: string, options: RefineOptions): Promi
     process.exit(1);
   }
   
-  // Verify CLI setup
+  // Check if CLI is available - if not, use manual mode
   const cliInstalled = await isCursorCliInstalled();
-  if (!cliInstalled) {
-    console.log(chalk.red('\n✗ cursor-agent CLI not found.'));
-    console.log(chalk.dim('Install with: curl https://cursor.com/install -fsS | bash\n'));
-    process.exit(1);
-  }
+  const useManualMode = !cliInstalled;
   
-  const isAuthenticated = await isCursorCliAuthenticated();
-  if (!isAuthenticated) {
-    console.log(chalk.red('\n✗ Not logged in to Cursor CLI.'));
-    console.log(chalk.dim('Run: cursor-agent login\n'));
-    process.exit(1);
+  if (useManualMode) {
+    console.log(chalk.yellow('\n⚠️  Cursor CLI (agent) not found - using manual mode.\n'));
+    console.log(chalk.dim('Prompts will be saved to files for you to run manually in Cursor IDE.\n'));
   }
   
   // Check if project is initialized
@@ -117,6 +109,21 @@ export async function refineCommand(idea: string, options: RefineOptions): Promi
   const stage1Result = await runPlanningTask(fullPrompt1);
   const elapsed1 = Math.round((Date.now() - startTime1) / 1000);
   
+  // Handle manual mode - CLI not available
+  if (stage1Result.manualMode) {
+    spinner1.info('Manual mode - prompt saved');
+    console.log(chalk.cyan('\n📋 MANUAL MODE\n'));
+    console.log(chalk.white('The Cursor CLI is not available. Please complete this task manually:\n'));
+    console.log(chalk.dim('1. Open the prompt file in Cursor IDE:'));
+    console.log(chalk.cyan(`   ${stage1Result.promptPath}\n`));
+    console.log(chalk.dim('2. Select all the content and use Cursor\'s AI (Ctrl+K or Cmd+K)'));
+    console.log(chalk.dim('3. Save the AI\'s response to:'));
+    console.log(chalk.cyan(`   ${path.join(getProjectPhasesDir(), 'enhanced-spec.md')}\n`));
+    console.log(chalk.dim('4. Then run the refine command again to continue:\n'));
+    console.log(chalk.cyan(`   ai-phases refine "${idea}"\n`));
+    process.exit(0);
+  }
+  
   if (!stage1Result.success) {
     spinner1.fail(`Stage 1 failed after ${elapsed1}s`);
     console.log(chalk.red('\nError: ') + chalk.dim(stage1Result.error || 'Unknown error'));
@@ -162,6 +169,21 @@ export async function refineCommand(idea: string, options: RefineOptions): Promi
   
   const stage2Result = await runPlanningTask(fullPrompt2);
   const elapsed2 = Math.round((Date.now() - startTime2) / 1000);
+  
+  // Handle manual mode - CLI not available
+  if (stage2Result.manualMode) {
+    spinner2.info('Manual mode - prompt saved');
+    console.log(chalk.cyan('\n📋 MANUAL MODE\n'));
+    console.log(chalk.white('Please complete this task manually:\n'));
+    console.log(chalk.dim('1. Open the prompt file in Cursor IDE:'));
+    console.log(chalk.cyan(`   ${stage2Result.promptPath}\n`));
+    console.log(chalk.dim('2. Select all the content and use Cursor\'s AI (Ctrl+K or Cmd+K)'));
+    console.log(chalk.dim('3. Save the AI\'s response to:'));
+    console.log(chalk.cyan(`   ${path.join(getProjectPhasesDir(), 'plan.md')}\n`));
+    console.log(chalk.dim('4. Then run plan command to process it:\n'));
+    console.log(chalk.cyan('   ai-phases plan --from-file\n'));
+    process.exit(0);
+  }
   
   if (!stage2Result.success) {
     spinner2.fail(`Stage 2 failed after ${elapsed2}s`);

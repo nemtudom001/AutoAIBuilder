@@ -6,6 +6,58 @@ import { promisify } from 'util';
 
 const execAsync = promisify(exec);
 
+// On Windows, run commands through WSL Ubuntu
+const isWindows = process.platform === 'win32';
+
+/**
+ * Convert Windows path to WSL path (C:\Users\... -> /mnt/c/Users/...)
+ */
+function toWslPath(windowsPath: string): string {
+  if (!isWindows) return windowsPath;
+  return windowsPath
+    .replace(/^([A-Z]):/i, (_, letter) => `/mnt/${letter.toLowerCase()}`)
+    .replace(/\\/g, '/');
+}
+
+/**
+ * Find the actual project directory (where package.json is)
+ * Looks in current directory and common subdirectories
+ */
+async function findProjectDir(): Promise<string> {
+  const cwd = process.cwd();
+  
+  // Check current directory first
+  if (await fs.pathExists(path.join(cwd, 'package.json'))) {
+    return cwd;
+  }
+  
+  // Check common subdirectories where AI might create projects
+  const possibleDirs = ['web', 'app', 'frontend', 'client', 'src', 'project'];
+  for (const dir of possibleDirs) {
+    const fullPath = path.join(cwd, dir);
+    if (await fs.pathExists(path.join(fullPath, 'package.json'))) {
+      return fullPath;
+    }
+  }
+  
+  // Check any directory that has package.json
+  try {
+    const entries = await fs.readdir(cwd, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== 'node_modules') {
+        const fullPath = path.join(cwd, entry.name);
+        if (await fs.pathExists(path.join(fullPath, 'package.json'))) {
+          return fullPath;
+        }
+      }
+    }
+  } catch {
+    // Ignore errors
+  }
+  
+  return cwd;
+}
+
 export interface PreflightResult {
   passed: boolean;
   checks: PreflightCheck[];
@@ -36,15 +88,18 @@ export async function runPreflightChecks(
     return { passed: true, checks, criticalFailures, warnings };
   }
 
+  // Find the actual project directory
+  const projectDir = await findProjectDir();
+
   // Check package.json exists
-  const packageJsonCheck = await checkPackageJson();
+  const packageJsonCheck = await checkPackageJson(projectDir);
   checks.push(packageJsonCheck);
   if (packageJsonCheck.status === 'failed') {
     criticalFailures.push(packageJsonCheck.message);
   }
 
   // Check node_modules exists
-  const nodeModulesCheck = await checkNodeModules();
+  const nodeModulesCheck = await checkNodeModules(projectDir);
   checks.push(nodeModulesCheck);
   if (nodeModulesCheck.status === 'failed') {
     criticalFailures.push(nodeModulesCheck.message);
@@ -52,7 +107,7 @@ export async function runPreflightChecks(
 
   // Check UI library specific requirements
   if (uiLibrary === 'shadcn') {
-    const shadcnChecks = await checkShadcnSetup();
+    const shadcnChecks = await checkShadcnSetup(projectDir);
     checks.push(...shadcnChecks);
     for (const check of shadcnChecks) {
       if (check.status === 'failed') {
@@ -64,7 +119,7 @@ export async function runPreflightChecks(
   }
 
   // Check TypeScript config
-  const tsConfigCheck = await checkTypeScriptConfig();
+  const tsConfigCheck = await checkTypeScriptConfig(projectDir);
   checks.push(tsConfigCheck);
   if (tsConfigCheck.status === 'warning') {
     warnings.push(tsConfigCheck.message);
@@ -72,7 +127,7 @@ export async function runPreflightChecks(
 
   // Check if project builds
   if (criticalFailures.length === 0) {
-    const buildCheck = await checkBuildWorks();
+    const buildCheck = await checkBuildWorks(projectDir);
     checks.push(buildCheck);
     if (buildCheck.status === 'failed') {
       criticalFailures.push(buildCheck.message);
@@ -87,14 +142,14 @@ export async function runPreflightChecks(
   };
 }
 
-async function checkPackageJson(): Promise<PreflightCheck> {
-  const packageJsonPath = path.join(process.cwd(), 'package.json');
+async function checkPackageJson(projectDir: string): Promise<PreflightCheck> {
+  const packageJsonPath = path.join(projectDir, 'package.json');
   
   if (await fs.pathExists(packageJsonPath)) {
     return {
       name: 'package.json',
       status: 'passed',
-      message: 'package.json exists',
+      message: `package.json exists (in ${path.basename(projectDir) || 'root'})`,
     };
   }
   
@@ -106,8 +161,8 @@ async function checkPackageJson(): Promise<PreflightCheck> {
   };
 }
 
-async function checkNodeModules(): Promise<PreflightCheck> {
-  const nodeModulesPath = path.join(process.cwd(), 'node_modules');
+async function checkNodeModules(projectDir: string): Promise<PreflightCheck> {
+  const nodeModulesPath = path.join(projectDir, 'node_modules');
   
   if (await fs.pathExists(nodeModulesPath)) {
     return {
@@ -125,11 +180,11 @@ async function checkNodeModules(): Promise<PreflightCheck> {
   };
 }
 
-async function checkShadcnSetup(): Promise<PreflightCheck[]> {
+async function checkShadcnSetup(projectDir: string): Promise<PreflightCheck[]> {
   const checks: PreflightCheck[] = [];
   
   // Check components.json exists
-  const componentsJsonPath = path.join(process.cwd(), 'components.json');
+  const componentsJsonPath = path.join(projectDir, 'components.json');
   if (await fs.pathExists(componentsJsonPath)) {
     checks.push({
       name: 'shadcn/ui config',
@@ -166,8 +221,8 @@ async function checkShadcnSetup(): Promise<PreflightCheck[]> {
   
   // Check if ui components directory exists
   const possibleUiPaths = [
-    path.join(process.cwd(), 'components', 'ui'),
-    path.join(process.cwd(), 'src', 'components', 'ui'),
+    path.join(projectDir, 'components', 'ui'),
+    path.join(projectDir, 'src', 'components', 'ui'),
   ];
   
   let uiDirExists = false;
@@ -207,8 +262,8 @@ async function checkShadcnSetup(): Promise<PreflightCheck[]> {
   return checks;
 }
 
-async function checkTypeScriptConfig(): Promise<PreflightCheck> {
-  const tsConfigPath = path.join(process.cwd(), 'tsconfig.json');
+async function checkTypeScriptConfig(projectDir: string): Promise<PreflightCheck> {
+  const tsConfigPath = path.join(projectDir, 'tsconfig.json');
   
   if (await fs.pathExists(tsConfigPath)) {
     return {
@@ -225,32 +280,41 @@ async function checkTypeScriptConfig(): Promise<PreflightCheck> {
   };
 }
 
-async function checkBuildWorks(): Promise<PreflightCheck> {
+async function checkBuildWorks(projectDir: string): Promise<PreflightCheck> {
   try {
-    // Run a quick type check instead of full build for speed
-    await execAsync('npx tsc --noEmit --skipLibCheck', {
-      cwd: process.cwd(),
-      timeout: 60000,
-    });
+    // Run npm run build through WSL on Windows for consistency
+    let command = 'npm run build';
+    let execOptions: any = {
+      cwd: projectDir,
+      timeout: 120000, // 2 minutes for build
+    };
+    
+    if (isWindows) {
+      const wslProjectDir = toWslPath(projectDir);
+      command = `wsl -d Ubuntu -e bash -c "cd '${wslProjectDir}' && npm run build"`;
+      execOptions.cwd = undefined;
+    }
+    
+    await execAsync(command, execOptions);
     
     return {
-      name: 'TypeScript check',
+      name: 'Build check',
       status: 'passed',
-      message: 'No TypeScript errors detected',
+      message: 'npm run build completed successfully',
     };
   } catch (error: any) {
     const errorOutput = error.stderr || error.stdout || error.message || '';
     
     // Extract first error for display
     const firstError = errorOutput.split('\n').find((line: string) => 
-      line.includes('error TS') || line.includes('Error:')
-    ) || 'TypeScript errors detected';
+      line.includes('error') || line.includes('Error:')
+    ) || 'Build errors detected';
     
     return {
-      name: 'TypeScript check',
+      name: 'Build check',
       status: 'failed',
-      message: `TypeScript errors exist: ${firstError.substring(0, 100)}`,
-      fix: 'Fix TypeScript errors before proceeding. Run: npx tsc --noEmit to see all errors.',
+      message: `Build failed: ${firstError.substring(0, 100)}`,
+      fix: 'Fix build errors before proceeding. Run: npm run build to see all errors.',
     };
   }
 }
