@@ -229,6 +229,38 @@ export async function runSetupWizard(): Promise<GlobalConfig> {
     console.log(chalk.yellow('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
   }
 
+  // GitHub CLI check
+  console.log(chalk.yellow('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
+  console.log(chalk.yellow('  GitHub CLI Setup (for auto repo creation)\n'));
+  
+  const ghStatus = await checkGitHubCliStatus();
+  
+  if (!ghStatus.installed) {
+    console.log(chalk.red('  ✗ GitHub CLI (gh) not found\n'));
+    console.log(chalk.white('  Install GitHub CLI:'));
+    if (isWindows) {
+      console.log(chalk.cyan('    winget install --id GitHub.cli'));
+    } else if (process.platform === 'darwin') {
+      console.log(chalk.cyan('    brew install gh'));
+    } else {
+      console.log(chalk.cyan('    sudo apt install gh'));
+    }
+    console.log(chalk.dim('\n  Or download from: ') + chalk.cyan('https://cli.github.com/'));
+    console.log(chalk.dim('\n  Then authenticate with: ') + chalk.cyan('gh auth login'));
+    console.log(chalk.yellow('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
+    console.log(chalk.yellow('  ⚠️  Auto repo creation will be disabled without GitHub CLI.\n'));
+  } else if (!ghStatus.authenticated) {
+    console.log(chalk.green('  ✓ GitHub CLI (gh) installed'));
+    console.log(chalk.yellow('  ✗ Not authenticated\n'));
+    console.log(chalk.white('  Authenticate with:'));
+    console.log(chalk.cyan('    gh auth login\n'));
+    console.log(chalk.yellow('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
+  } else {
+    console.log(chalk.green('  ✓ GitHub CLI (gh) installed'));
+    console.log(chalk.green('  ✓ Authenticated with GitHub'));
+    console.log(chalk.yellow('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
+  }
+
   // Context7 check
   const answers = await inquirer.prompt([
     {
@@ -357,8 +389,37 @@ interface CliStatus {
   authenticated: boolean;
 }
 
+interface GhCliStatus {
+  installed: boolean;
+  authenticated: boolean;
+}
+
 // On Windows, run cursor-agent through WSL Ubuntu
 const isWindows = process.platform === 'win32';
+
+/**
+ * Check if GitHub CLI (gh) is installed and authenticated
+ */
+async function checkGitHubCliStatus(): Promise<GhCliStatus> {
+  const { exec } = await import('child_process');
+  const { promisify } = await import('util');
+  const execAsync = promisify(exec);
+  
+  try {
+    // Check if gh is installed
+    await execAsync('gh --version', { timeout: 5000 });
+  } catch {
+    return { installed: false, authenticated: false };
+  }
+  
+  try {
+    // Check if authenticated
+    await execAsync('gh auth status', { timeout: 5000 });
+    return { installed: true, authenticated: true };
+  } catch {
+    return { installed: true, authenticated: false };
+  }
+}
 
 function getCursorAgentVersionCmd(): string {
   if (isWindows) {

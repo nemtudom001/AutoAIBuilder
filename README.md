@@ -21,11 +21,12 @@ Fully automated AI-powered project phase orchestration for Cursor IDE. Transform
 
 ### Prerequisites
 
-| Requirement | Version |
-|-------------|---------|
-| Node.js | 18+ |
-| Cursor IDE | Active subscription required |
-| Git | Any recent version |
+| Requirement | Version | Purpose |
+|-------------|---------|---------|
+| Node.js | 18+ | Runtime |
+| Cursor IDE | Active subscription | AI models |
+| Git | Any recent version | Version control |
+| GitHub CLI (`gh`) | Any recent version | Auto repo creation |
 
 ### Step 1: Install AI Phase Builder
 
@@ -33,9 +34,59 @@ Fully automated AI-powered project phase orchestration for Cursor IDE. Transform
 npm install -g ai-phase-builder
 ```
 
-### Step 2: Install Cursor CLI
+### Step 2: Install GitHub CLI
 
-The Cursor CLI (`cursor-agent`) requires a Unix-like environment. Follow the instructions for your operating system:
+GitHub CLI is required for automatic repository creation.
+
+<details>
+<summary><strong>🪟 Windows</strong></summary>
+
+```powershell
+# Using winget (recommended)
+winget install --id GitHub.cli
+
+# Or download from: https://cli.github.com/
+```
+
+After installation, authenticate:
+```powershell
+gh auth login
+```
+
+</details>
+
+<details>
+<summary><strong>🍎 macOS</strong></summary>
+
+```bash
+# Using Homebrew
+brew install gh
+
+# Authenticate
+gh auth login
+```
+
+</details>
+
+<details>
+<summary><strong>🐧 Linux</strong></summary>
+
+```bash
+# Ubuntu/Debian
+sudo apt install gh
+
+# Or using conda
+conda install gh --channel conda-forge
+
+# Authenticate
+gh auth login
+```
+
+</details>
+
+### Step 3: Install Cursor CLI
+
+The Cursor CLI (`cursor-agent`) requires a Unix-like environment. Follow the instructions for your operating system (Windows users: install inside WSL):
 
 <details>
 <summary><strong>🪟 Windows (WSL Required)</strong></summary>
@@ -134,7 +185,7 @@ cursor-agent login
 
 </details>
 
-### Step 3: Run Setup
+### Step 4: Run Setup
 
 ```bash
 ai-phases config --setup
@@ -380,6 +431,22 @@ wsl -d Ubuntu -e bash -c "cursor-agent login"
 # macOS / Linux
 cursor-agent login
 ```
+
+### "GitHub CLI not authenticated"
+
+```bash
+# Run this and follow the prompts
+gh auth login
+
+# Verify authentication
+gh auth status
+```
+
+### "Failed to create GitHub repository"
+
+1. Ensure GitHub CLI is installed: `gh --version`
+2. Ensure you're authenticated: `gh auth status`
+3. Check if repo name already exists on your GitHub
 
 ### Phase keeps failing
 
