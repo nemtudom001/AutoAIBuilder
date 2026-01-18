@@ -1,6 +1,7 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import chalk from 'chalk';
+import path from 'path';
 
 const execAsync = promisify(exec);
 
@@ -270,5 +271,173 @@ export async function getBaseCommit(): Promise<string> {
     return stdout.trim();
   } catch {
     return '';
+  }
+}
+
+/**
+ * Check if gh CLI is installed and authenticated
+ */
+export async function isGhCliReady(): Promise<boolean> {
+  try {
+    await execAsync('gh auth status', { timeout: 5000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check if remote 'origin' exists
+ */
+export async function hasRemote(): Promise<boolean> {
+  try {
+    const { stdout } = await execAsync('git remote get-url origin');
+    return stdout.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Create a GitHub repository for the project
+ */
+export async function createGitHubRepo(
+  projectName: string,
+  visibility: 'private' | 'public' = 'private'
+): Promise<{ success: boolean; url?: string; error?: string }> {
+  // Check if gh CLI is ready
+  const ghReady = await isGhCliReady();
+  if (!ghReady) {
+    return {
+      success: false,
+      error: 'GitHub CLI not authenticated. Run: gh auth login',
+    };
+  }
+
+  // Check if already has remote
+  if (await hasRemote()) {
+    try {
+      const { stdout } = await execAsync('git remote get-url origin');
+      return {
+        success: true,
+        url: stdout.trim(),
+      };
+    } catch {
+      // Continue to create new repo
+    }
+  }
+
+  // Ensure git is initialized
+  const isRepo = await isGitRepo();
+  if (!isRepo) {
+    await execAsync('git init');
+    console.log(chalk.dim('  Initialized git repository'));
+  }
+
+  // Create initial commit if no commits exist
+  try {
+    await execAsync('git rev-parse HEAD');
+  } catch {
+    // No commits yet, create initial commit
+    await execAsync('git add -A');
+    try {
+      await execAsync('git commit -m "Initial commit"');
+      console.log(chalk.dim('  Created initial commit'));
+    } catch {
+      // Nothing to commit, that's fine
+    }
+  }
+
+  // Sanitize project name for repo name
+  const repoName = projectName
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+
+  try {
+    // Create repo on GitHub
+    const visibilityFlag = visibility === 'private' ? '--private' : '--public';
+    const { stdout } = await execAsync(
+      `gh repo create "${repoName}" ${visibilityFlag} --source=. --remote=origin --push`,
+      { timeout: 60000 }
+    );
+
+    // Extract URL from output
+    const urlMatch = stdout.match(/https:\/\/github\.com\/[^\s]+/);
+    const url = urlMatch ? urlMatch[0] : stdout.trim().split('\n')[0];
+
+    console.log(chalk.green(`✓ Created GitHub repo: ${url}`));
+    return { success: true, url };
+  } catch (error: any) {
+    // Check if repo already exists
+    if (error.message?.includes('already exists')) {
+      // Try to set remote to existing repo
+      try {
+        const { stdout: username } = await execAsync('gh api user -q .login');
+        const repoUrl = `https://github.com/${username.trim()}/${repoName}`;
+        await execAsync(`git remote add origin ${repoUrl}`);
+        await execAsync('git push -u origin main');
+        return { success: true, url: repoUrl };
+      } catch {
+        return {
+          success: false,
+          error: `Repository "${repoName}" already exists. Set remote manually.`,
+        };
+      }
+    }
+
+    return {
+      success: false,
+      error: error.message || 'Failed to create GitHub repository',
+    };
+  }
+}
+
+/**
+ * Push current branch to remote
+ */
+export async function pushToRemote(): Promise<{ success: boolean; error?: string }> {
+  const status = await getGitStatus();
+
+  if (!status.isRepo) {
+    return { success: false, error: 'Not a git repository' };
+  }
+
+  // Check if remote exists
+  const hasOrigin = await hasRemote();
+  if (!hasOrigin) {
+    return { success: false, error: 'No remote configured' };
+  }
+
+  try {
+    // Get current branch
+    const branch = status.branch || 'main';
+    
+    // Push with upstream tracking
+    await execAsync(`git push -u origin ${branch}`, { timeout: 60000 });
+    console.log(chalk.green('✓ Pushed to remote'));
+    return { success: true };
+  } catch (error: any) {
+    // Check if it's just "nothing to push"
+    if (error.message?.includes('Everything up-to-date')) {
+      return { success: true };
+    }
+    return {
+      success: false,
+      error: error.message || 'Failed to push to remote',
+    };
+  }
+}
+
+/**
+ * Push tags to remote
+ */
+export async function pushTagsToRemote(): Promise<boolean> {
+  try {
+    await execAsync('git push --tags', { timeout: 30000 });
+    return true;
+  } catch {
+    return false;
   }
 }

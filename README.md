@@ -4,14 +4,16 @@ Fully automated AI-powered project phase orchestration for Cursor IDE. Transform
 
 ## Features
 
-- **Fully Automated** - No manual prompting or copy-paste. Everything runs via Cursor CLI
+- **100% Hands-Off** - Just describe your idea, everything else is automated
+- **Auto-Run All Phases** - Phases execute sequentially without intervention
+- **Auto GitHub Repo** - Creates private GitHub repo and pushes automatically
 - **Idea Refinement Chain** - Turn rough ideas into comprehensive specs using Claude Opus
 - **Phase Structuring** - Break projects into logical, executable phases
 - **Smart Handovers** - Auto-generated context-aware transitions between phases
 - **Rollback Support** - Retry failed phases with learned context (max 3 attempts)
 - **Drift Detection** - Track manual changes made outside of phase runs
 - **Context7 Integration** - Always use up-to-date documentation
-- **Git Integration** - Auto-commit checkpoints for each phase
+- **Git Integration** - Auto-commit and auto-push after each phase
 
 ## Requirements
 
@@ -39,17 +41,31 @@ npx ai-phase-builder
 # First time setup - opens browser for Cursor login
 ai-phases config --setup
 
-# Initialize in your project
-cd your-project
+# Create project folder and initialize
+mkdir my-project && cd my-project
 ai-phases init
 
-# Transform your idea into a structured plan (fully automated)
+# ONE COMMAND does everything:
 ai-phases refine "build a crypto price dashboard with real-time updates"
 
-# Run phases (fully automated)
+# That's it! The tool will:
+# 1. Generate enhanced specification (Claude Opus)
+# 2. Create phase plan with tasks
+# 3. Create private GitHub repo
+# 4. Run ALL phases automatically
+# 5. Commit & push after each phase
+# 6. Generate handovers between phases
+```
+
+### Want Manual Control?
+
+```bash
+# Generate plan without auto-running phases
+ai-phases refine "your idea" --no-auto-run
+
+# Then run phases individually
 ai-phases run --phase 1
 ai-phases run --phase 2
-# ...
 ```
 
 ## Commands
@@ -164,10 +180,24 @@ Global config stored at: `~/.ai-phase-builder/config.json`
     "ui_library": "shadcn",
     "design_system": "vercel",
     "auto_commit": true,
+    "auto_push": true,
+    "auto_run_phases": true,
+    "auto_create_repo": true,
+    "github_visibility": "private",
     "max_retry_attempts": 3
   }
 }
 ```
+
+### Automation Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `auto_run_phases` | `true` | Automatically run all phases after `refine` |
+| `auto_create_repo` | `true` | Create GitHub repo automatically |
+| `github_visibility` | `private` | Repo visibility (private/public) |
+| `auto_commit` | `true` | Commit after each phase |
+| `auto_push` | `true` | Push to remote after each commit |
 
 ### Cursor CLI Authentication
 

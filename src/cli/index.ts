@@ -18,7 +18,7 @@ const program = new Command();
 program
   .name('ai-phases')
   .description('AI-powered project phase orchestration for Cursor IDE')
-  .version('1.0.0');
+  .version('1.0.2');
 
 // Check for first-run setup
 const isFirstRun = await ensureGlobalConfig();
@@ -43,6 +43,7 @@ program
   .description('Enhance your idea and structure it into phases')
   .argument('<idea>', 'Your project idea (in quotes)')
   .option('--skip-research', 'Skip documentation lookup stage')
+  .option('--no-auto-run', 'Skip auto-running phases (just generate plan)')
   .action(refineCommand);
 
 // Plan command - manual phase planning

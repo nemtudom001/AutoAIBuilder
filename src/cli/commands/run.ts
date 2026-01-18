@@ -22,6 +22,8 @@ import {
   commitPhaseCompletion,
   createPhaseCheckpoint,
   getGitStatus,
+  pushToRemote,
+  hasRemote,
 } from '../../core/git-integration.js';
 import {
   runCursorAgent,
@@ -282,6 +284,14 @@ async function handlePhaseCompleted(
       if (phase) {
         await commitPhaseCompletion(phaseNumber, phase.name, attemptNumber);
         await createPhaseCheckpoint(phaseNumber, attemptNumber);
+        
+        // Auto-push if enabled and remote exists
+        if (globalConfig.defaults.auto_push && await hasRemote()) {
+          const pushResult = await pushToRemote();
+          if (!pushResult.success && pushResult.error) {
+            console.log(chalk.yellow(`⚠️  Push failed: ${pushResult.error}`));
+          }
+        }
       }
     }
     

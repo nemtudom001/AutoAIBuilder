@@ -24,9 +24,16 @@ import {
   isCursorCliAuthenticated,
   extractMarkdown,
 } from '../../core/cursor-cli.js';
+import {
+  isGitRepo,
+  initGitRepo,
+  createGitHubRepo,
+} from '../../core/git-integration.js';
+import { runCommand } from './run.js';
 
 interface RefineOptions {
   skipResearch?: boolean;
+  noAutoRun?: boolean;
 }
 
 export async function refineCommand(idea: string, options: RefineOptions): Promise<void> {
@@ -212,9 +219,76 @@ export async function refineCommand(idea: string, options: RefineOptions): Promi
       console.log(chalk.dim(`     ${p.tasks.length} tasks, ${p.validation_criteria.length} validation criteria`));
     });
     
-    console.log(chalk.white('\n🚀 Ready to execute! Run:\n'));
-    console.log(chalk.cyan('  ai-phases run --phase 1\n'));
-    console.log(chalk.dim('Or view full status with: ai-phases status\n'));
+    // Auto-create GitHub repo if enabled
+    if (globalConfig.defaults.auto_create_repo) {
+      console.log(chalk.yellow('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
+      console.log(chalk.yellow.bold('  📦 Setting up GitHub Repository'));
+      console.log(chalk.yellow('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
+      
+      const repoResult = await createGitHubRepo(
+        state?.project_name || path.basename(process.cwd()),
+        globalConfig.defaults.github_visibility
+      );
+      
+      if (!repoResult.success) {
+        console.log(chalk.yellow(`⚠️  ${repoResult.error}`));
+        console.log(chalk.dim('Continuing without remote repository...\n'));
+      }
+    }
+    
+    // Auto-run all phases if enabled and not disabled via flag
+    if (globalConfig.defaults.auto_run_phases && !options.noAutoRun) {
+      console.log(chalk.magenta('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
+      console.log(chalk.magenta.bold('  🤖 Auto-Running All Phases'));
+      console.log(chalk.magenta('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
+      console.log(chalk.dim('Full automation enabled. Running all phases sequentially...\n'));
+      
+      for (let i = 1; i <= phases.length; i++) {
+        const currentPhase = phases.find(p => p.phase_number === i);
+        if (!currentPhase) continue;
+        
+        console.log(chalk.cyan(`\n▶ Starting Phase ${i}/${phases.length}: ${currentPhase.name}\n`));
+        
+        try {
+          await runCommand({ phase: String(i), auto: true });
+          
+          // Check if phase completed or blocked
+          const updatedState = await loadProjectState();
+          const updatedPhase = updatedState?.phases.find(p => p.phase_number === i);
+          
+          if (updatedPhase?.status === 'blocked') {
+            console.log(chalk.red(`\n⛔ Phase ${i} is blocked. Stopping auto-run.`));
+            console.log(chalk.dim('Fix the issue and run: ai-phases run --phase ' + i));
+            break;
+          }
+          
+          if (updatedPhase?.status !== 'completed') {
+            console.log(chalk.yellow(`\n⚠️  Phase ${i} did not complete successfully. Stopping auto-run.`));
+            break;
+          }
+        } catch (error) {
+          console.log(chalk.red(`\n✗ Phase ${i} encountered an error. Stopping auto-run.`));
+          console.log(chalk.dim(error instanceof Error ? error.message : 'Unknown error'));
+          break;
+        }
+      }
+      
+      // Final status
+      const finalState = await loadProjectState();
+      if (finalState?.status === 'completed') {
+        console.log(chalk.green('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
+        console.log(chalk.green.bold('  🎉 ALL PHASES COMPLETE!'));
+        console.log(chalk.green('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
+        console.log(chalk.white('Your project is ready!'));
+        console.log(chalk.dim('View details with: ai-phases status\n'));
+      } else {
+        console.log(chalk.dim('\nView current status with: ai-phases status\n'));
+      }
+    } else {
+      console.log(chalk.white('\n🚀 Ready to execute! Run:\n'));
+      console.log(chalk.cyan('  ai-phases run --phase 1\n'));
+      console.log(chalk.dim('Or view full status with: ai-phases status\n'));
+    }
     
   } catch (error) {
     spinner3.fail('Failed to process phase plan');

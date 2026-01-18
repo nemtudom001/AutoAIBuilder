@@ -19,6 +19,10 @@ export interface GlobalConfig {
     ui_library: string;
     design_system: string;
     auto_commit: boolean;
+    auto_push: boolean;
+    auto_run_phases: boolean;
+    auto_create_repo: boolean;
+    github_visibility: 'private' | 'public';
     max_retry_attempts: number;
   };
 }
@@ -87,7 +91,7 @@ export async function saveProjectConfig(config: ProjectConfig): Promise<void> {
 
 export function getDefaultGlobalConfig(): GlobalConfig {
   return {
-    version: '1.0.0',
+    version: '1.0.2',
     setup_complete: false,
     cursor: {
       enabled: true,
@@ -99,6 +103,10 @@ export function getDefaultGlobalConfig(): GlobalConfig {
       ui_library: 'shadcn',
       design_system: 'vercel',
       auto_commit: true,
+      auto_push: true,
+      auto_run_phases: true,
+      auto_create_repo: true,
+      github_visibility: 'private',
       max_retry_attempts: 3,
     },
   };
@@ -234,16 +242,56 @@ export async function runSetupWizard(): Promise<GlobalConfig> {
       choices: ['vercel', 'apple', 'material', 'custom'],
       default: 'vercel',
     },
+  ]);
+
+  // Automation preferences
+  console.log(chalk.yellow('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
+  console.log(chalk.yellow('  Automation Settings\n'));
+  
+  const automation = await inquirer.prompt<{
+    auto_run_phases: boolean;
+    auto_create_repo: boolean;
+    github_visibility?: 'private' | 'public';
+    auto_commit: boolean;
+    auto_push?: boolean;
+  }>([
+    {
+      type: 'confirm',
+      name: 'auto_run_phases',
+      message: 'Auto-run ALL phases after planning? (fully hands-off)',
+      default: true,
+    },
+    {
+      type: 'confirm',
+      name: 'auto_create_repo',
+      message: 'Auto-create GitHub repo for new projects?',
+      default: true,
+    },
+    {
+      type: 'list',
+      name: 'github_visibility',
+      message: 'Default repo visibility:',
+      choices: ['private', 'public'],
+      default: 'private',
+      when: (answers) => answers.auto_create_repo,
+    },
     {
       type: 'confirm',
       name: 'auto_commit',
       message: 'Auto-commit after each phase?',
       default: true,
     },
+    {
+      type: 'confirm',
+      name: 'auto_push',
+      message: 'Auto-push to remote after each phase?',
+      default: true,
+      when: (answers) => answers.auto_commit,
+    },
   ]);
 
   const config: GlobalConfig = {
-    version: '1.0.0',
+    version: '1.0.2',
     setup_complete: true,
     cursor: {
       enabled: true,
@@ -254,7 +302,11 @@ export async function runSetupWizard(): Promise<GlobalConfig> {
     defaults: {
       ui_library: preferences.ui_library,
       design_system: preferences.design_system,
-      auto_commit: preferences.auto_commit,
+      auto_commit: automation.auto_commit,
+      auto_push: automation.auto_push ?? true,
+      auto_run_phases: automation.auto_run_phases,
+      auto_create_repo: automation.auto_create_repo,
+      github_visibility: automation.github_visibility ?? 'private',
       max_retry_attempts: 3,
     },
   };
