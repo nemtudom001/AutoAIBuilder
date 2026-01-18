@@ -91,7 +91,7 @@ export async function saveProjectConfig(config: ProjectConfig): Promise<void> {
 
 export function getDefaultGlobalConfig(): GlobalConfig {
   return {
-    version: '1.0.3',
+    version: '1.0.4',
     setup_complete: false,
     cursor: {
       enabled: true,
@@ -291,7 +291,7 @@ export async function runSetupWizard(): Promise<GlobalConfig> {
   ]);
 
   const config: GlobalConfig = {
-    version: '1.0.3',
+    version: '1.0.4',
     setup_complete: true,
     cursor: {
       enabled: true,
