@@ -49,6 +49,14 @@ Do NOT omit, simplify, or defer any of these features. They are core requirement
 - UI Library: ${config.defaults.ui_library}
 - Design System: ${config.defaults.design_system}
 
+## CRITICAL: Use Latest Versions
+Always specify the LATEST stable versions in setup tasks:
+- Next.js: 16.x (use \`npx create-next-app@latest\`)
+- React: 19.x
+- Tailwind CSS: 4.x (with \`@import "tailwindcss"\` syntax)
+- TypeScript: 5.x
+Do NOT use outdated versions from training data. Check Context7 MCP for current versions.
+
 ## Output Format
 **CRITICAL: Output the ENTIRE specification as your response. Do NOT use any tools to save files.**
 **Your response text IS the output - it will be captured and saved automatically.**
@@ -475,11 +483,21 @@ Stage: ${generated.stage}
   
   // Add Context7 lookup instructions if there are libraries to look up
   if (generated.context7Lookups && generated.context7Lookups.length > 0) {
-    fullPrompt += `## Documentation Lookup (Context7)
-**Before proceeding, use @context7 to look up current documentation for:**
-${generated.context7Lookups.map(lib => `- ${lib}: latest setup guide and best practices`).join('\n')}
+    fullPrompt += `## CRITICAL: Documentation Lookup Required (Context7)
 
-This ensures you have up-to-date API references and avoid deprecated patterns.
+**You MUST use the Context7 MCP tool to look up current documentation BEFORE writing any code.**
+Your training data may be outdated. Context7 has the latest versions.
+
+**Required lookups - call the resolve-library-id and query-docs tools now:**
+${generated.context7Lookups.map(lib => `- ${lib}: query for "latest version installation and setup"`).join('\n')}
+
+**IMPORTANT Version Requirements:**
+- Next.js: Use version 16.x (NOT 15.x) - run \`npx create-next-app@latest\`
+- React: Use version 19.x 
+- Tailwind CSS: Use version 4.x with \`@import "tailwindcss"\` syntax
+- Always use the LATEST stable versions from Context7, not your training data
+
+DO NOT proceed until you have queried Context7 for each library above.
 
 ---
 
