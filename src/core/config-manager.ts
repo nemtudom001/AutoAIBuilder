@@ -229,77 +229,100 @@ export async function runSetupWizard(): Promise<GlobalConfig> {
     console.log(chalk.yellow('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
   }
 
-  // GitHub CLI check
+  // GitHub Version Control Setup
   console.log(chalk.yellow('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
-  console.log(chalk.yellow('  GitHub CLI Setup (for auto repo creation)\n'));
+  console.log(chalk.yellow('  GitHub Integration\n'));
+  console.log(chalk.dim('  This enables auto repo creation and auto-push after each phase.\n'));
   
-  let ghStatus = await checkGitHubCliStatus();
+  const githubAnswer = await inquirer.prompt([
+    {
+      type: 'confirm',
+      name: 'use_github',
+      message: 'Do you want to use GitHub for version control?',
+      default: true,
+    },
+  ]);
   
-  if (!ghStatus.installed) {
-    console.log(chalk.red('  ✗ GitHub CLI (gh) not found\n'));
-    console.log(chalk.white('  Install GitHub CLI:'));
-    if (isWindows) {
-      console.log(chalk.cyan('    winget install --id GitHub.cli'));
-    } else if (process.platform === 'darwin') {
-      console.log(chalk.cyan('    brew install gh'));
-    } else {
-      console.log(chalk.cyan('    sudo apt install gh'));
-    }
-    console.log(chalk.dim('\n  Or download from: ') + chalk.cyan('https://cli.github.com/'));
-    console.log(chalk.yellow('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
+  let githubReady = false;
+  
+  if (githubAnswer.use_github) {
+    // Check GitHub CLI
+    let ghStatus = await checkGitHubCliStatus();
     
-    const ghInstallAnswer = await inquirer.prompt([
-      {
-        type: 'confirm',
-        name: 'continue_anyway',
-        message: 'Continue setup anyway? (auto repo creation will be disabled)',
-        default: false,
-      },
-    ]);
-    
-    if (!ghInstallAnswer.continue_anyway) {
-      console.log(chalk.dim('\nSetup cancelled. Install GitHub CLI first, then run:'));
-      console.log(chalk.cyan('  ai-phases config --setup\n'));
-      process.exit(1);
-    }
-    console.log(chalk.yellow('\n  ⚠️  Auto repo creation will be disabled without GitHub CLI.\n'));
-  } else if (!ghStatus.authenticated) {
-    console.log(chalk.green('  ✓ GitHub CLI (gh) installed'));
-    console.log(chalk.yellow('  ✗ Not authenticated\n'));
-    console.log(chalk.white('  You need to authenticate with GitHub.'));
-    console.log(chalk.dim('  This will open your browser to sign in.\n'));
-    console.log(chalk.yellow('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
-    
-    const ghLoginAnswer = await inquirer.prompt([
-      {
-        type: 'confirm',
-        name: 'login_now',
-        message: 'Login to GitHub now?',
-        default: true,
-      },
-    ]);
-    
-    if (ghLoginAnswer.login_now) {
-      const ghLoginSpinner = ora('Opening browser for GitHub login...').start();
-      const ghLoginSuccess = await runGitHubLogin();
-      
-      if (ghLoginSuccess) {
-        ghLoginSpinner.succeed('Logged in to GitHub!');
-        ghStatus = await checkGitHubCliStatus(); // Re-check status
+    if (!ghStatus.installed) {
+      console.log(chalk.red('\n  ✗ GitHub CLI (gh) not found\n'));
+      console.log(chalk.white('  Install GitHub CLI first:'));
+      if (isWindows) {
+        console.log(chalk.cyan('    winget install --id GitHub.cli'));
+      } else if (process.platform === 'darwin') {
+        console.log(chalk.cyan('    brew install gh'));
       } else {
-        ghLoginSpinner.fail('GitHub login failed or was cancelled');
-        console.log(chalk.yellow('\nYou can login later with: gh auth login'));
-        console.log(chalk.yellow('Auto repo creation will be disabled until authenticated.\n'));
+        console.log(chalk.cyan('    sudo apt install gh'));
       }
+      console.log(chalk.dim('\n  Or download from: ') + chalk.cyan('https://cli.github.com/'));
+      console.log(chalk.yellow('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
+      
+      const ghInstallAnswer = await inquirer.prompt([
+        {
+          type: 'confirm',
+          name: 'continue_anyway',
+          message: 'Continue setup without GitHub? (you can set it up later)',
+          default: true,
+        },
+      ]);
+      
+      if (!ghInstallAnswer.continue_anyway) {
+        console.log(chalk.dim('\nSetup cancelled. Install GitHub CLI first, then run:'));
+        console.log(chalk.cyan('  ai-phases config --setup\n'));
+        process.exit(1);
+      }
+      console.log(chalk.yellow('\n  ⚠️  GitHub features disabled. You can enable later with: ai-phases config --setup\n'));
     } else {
-      console.log(chalk.yellow('\nLogin later with: gh auth login'));
-      console.log(chalk.yellow('Auto repo creation will be disabled until authenticated.\n'));
+      console.log(chalk.green('\n  ✓ GitHub CLI (gh) installed'));
+      
+      if (!ghStatus.authenticated) {
+        console.log(chalk.yellow('  ✗ Not authenticated with GitHub\n'));
+        console.log(chalk.white('  You need to authenticate to enable auto repo creation.'));
+        console.log(chalk.dim('  This will open your browser to sign in.\n'));
+        
+        const ghLoginAnswer = await inquirer.prompt([
+          {
+            type: 'confirm',
+            name: 'login_now',
+            message: 'Login to GitHub now?',
+            default: true,
+          },
+        ]);
+        
+        if (ghLoginAnswer.login_now) {
+          const ghLoginSpinner = ora('Opening browser for GitHub login...').start();
+          const ghLoginSuccess = await runGitHubLogin();
+          
+          if (ghLoginSuccess) {
+            ghLoginSpinner.succeed('Logged in to GitHub!');
+            ghStatus = await checkGitHubCliStatus(); // Re-check status
+            if (ghStatus.authenticated) {
+              githubReady = true;
+            }
+          } else {
+            ghLoginSpinner.fail('GitHub login failed or was cancelled');
+            console.log(chalk.yellow('\nYou can login later with: gh auth login'));
+            console.log(chalk.yellow('GitHub features will be disabled until authenticated.\n'));
+          }
+        } else {
+          console.log(chalk.yellow('\nLogin later with: gh auth login'));
+          console.log(chalk.yellow('GitHub features will be disabled until authenticated.\n'));
+        }
+      } else {
+        console.log(chalk.green('  ✓ Authenticated with GitHub'));
+        githubReady = true;
+      }
     }
   } else {
-    console.log(chalk.green('  ✓ GitHub CLI (gh) installed'));
-    console.log(chalk.green('  ✓ Authenticated with GitHub'));
-    console.log(chalk.yellow('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
+    console.log(chalk.dim('\n  GitHub integration skipped. You can enable later with: ai-phases config --setup\n'));
   }
+  
+  console.log(chalk.yellow('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
 
   // Context7 check
   const answers = await inquirer.prompt([
@@ -343,13 +366,8 @@ export async function runSetupWizard(): Promise<GlobalConfig> {
   console.log(chalk.yellow('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
   console.log(chalk.yellow('  Automation Settings\n'));
   
-  const automation = await inquirer.prompt<{
-    auto_run_phases: boolean;
-    auto_create_repo: boolean;
-    github_visibility?: 'private' | 'public';
-    auto_commit: boolean;
-    auto_push?: boolean;
-  }>([
+  // Build prompts dynamically based on GitHub status
+  const automationPrompts: any[] = [
     {
       type: 'confirm',
       name: 'auto_run_phases',
@@ -358,35 +376,49 @@ export async function runSetupWizard(): Promise<GlobalConfig> {
     },
     {
       type: 'confirm',
-      name: 'auto_create_repo',
-      message: 'Auto-create GitHub repo for new projects?',
-      default: true,
-    },
-    {
-      type: 'list',
-      name: 'github_visibility',
-      message: 'Default repo visibility:',
-      choices: ['private', 'public'],
-      default: 'private',
-      when: (answers) => answers.auto_create_repo,
-    },
-    {
-      type: 'confirm',
       name: 'auto_commit',
       message: 'Auto-commit after each phase?',
       default: true,
     },
-    {
-      type: 'confirm',
-      name: 'auto_push',
-      message: 'Auto-push to remote after each phase?',
-      default: true,
-      when: (answers) => answers.auto_commit,
-    },
-  ]);
+  ];
+  
+  // Only show GitHub options if GitHub is set up
+  if (githubReady) {
+    automationPrompts.push(
+      {
+        type: 'confirm',
+        name: 'auto_create_repo',
+        message: 'Auto-create GitHub repo for new projects?',
+        default: true,
+      },
+      {
+        type: 'list',
+        name: 'github_visibility',
+        message: 'Default repo visibility:',
+        choices: ['private', 'public'],
+        default: 'private',
+        when: (promptAnswers: any) => promptAnswers.auto_create_repo,
+      },
+      {
+        type: 'confirm',
+        name: 'auto_push',
+        message: 'Auto-push to remote after each phase?',
+        default: true,
+        when: (promptAnswers: any) => promptAnswers.auto_commit,
+      }
+    );
+  }
+  
+  const automation = await inquirer.prompt<{
+    auto_run_phases: boolean;
+    auto_create_repo?: boolean;
+    github_visibility?: 'private' | 'public';
+    auto_commit: boolean;
+    auto_push?: boolean;
+  }>(automationPrompts);
 
   const config: GlobalConfig = {
-    version: '1.1.0',
+    version: '1.4.0',
     setup_complete: true,
     cursor: {
       enabled: true,
@@ -398,9 +430,9 @@ export async function runSetupWizard(): Promise<GlobalConfig> {
       ui_library: preferences.ui_library,
       design_system: preferences.design_system,
       auto_commit: automation.auto_commit,
-      auto_push: automation.auto_push ?? true,
+      auto_push: githubReady ? (automation.auto_push ?? true) : false,
       auto_run_phases: automation.auto_run_phases,
-      auto_create_repo: automation.auto_create_repo,
+      auto_create_repo: githubReady ? (automation.auto_create_repo ?? true) : false,
       github_visibility: automation.github_visibility ?? 'private',
       max_retry_attempts: 3,
     },

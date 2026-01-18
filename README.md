@@ -175,10 +175,11 @@ ai-phases init
 ```
 
 On first run, `init` will automatically run the setup wizard which:
-- Verifies Cursor CLI installation → **prompts to login if needed**
-- Verifies GitHub CLI installation → **prompts to authenticate if needed**
-- Configures your preferences (UI library, design system)
-- Sets up automation options (auto-run, auto-commit, auto-push)
+1. Verifies Cursor CLI → **prompts to login if needed**
+2. Asks "Do you want to use GitHub for version control?"
+   - If yes → checks GitHub CLI → **prompts to authenticate if needed**
+3. Configures your preferences (UI library, design system)
+4. Sets up automation options (auto-run, auto-commit, auto-push)
 
 All authentication happens during setup, before any AI generation starts!
 
