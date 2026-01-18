@@ -1,7 +1,6 @@
 import fs from 'fs-extra';
 import path from 'path';
 import chalk from 'chalk';
-import inquirer from 'inquirer';
 import ora from 'ora';
 import boxen from 'boxen';
 import { loadGlobalConfig, loadProjectConfig, getProjectPhasesDir } from '../../core/config-manager.js';
@@ -18,10 +17,13 @@ import {
   buildCursorPrompt,
   savePromptToFile,
 } from '../../core/prompt-builder.js';
-import { exec } from 'child_process';
-import { promisify } from 'util';
-
-const execAsync = promisify(exec);
+import {
+  runCursorAgent,
+  runPlanningTask,
+  isCursorCliInstalled,
+  getCursorApiKey,
+  extractMarkdown,
+} from '../../core/cursor-cli.js';
 
 interface RefineOptions {
   skipResearch?: boolean;
@@ -32,6 +34,21 @@ export async function refineCommand(idea: string, options: RefineOptions): Promi
   const globalConfig = await loadGlobalConfig();
   if (!globalConfig || !globalConfig.setup_complete) {
     console.log(chalk.yellow('Please run setup first: ai-phases config --setup'));
+    process.exit(1);
+  }
+  
+  // Verify CLI setup
+  const cliInstalled = await isCursorCliInstalled();
+  if (!cliInstalled) {
+    console.log(chalk.red('\n✗ cursor-agent CLI not found.'));
+    console.log(chalk.dim('Install with: curl https://cursor.com/install -fsS | bash\n'));
+    process.exit(1);
+  }
+  
+  const apiKey = await getCursorApiKey();
+  if (!apiKey) {
+    console.log(chalk.red('\n✗ Cursor API key not configured.'));
+    console.log(chalk.dim('Run: ai-phases config --setup\n'));
     process.exit(1);
   }
   
@@ -46,7 +63,7 @@ export async function refineCommand(idea: string, options: RefineOptions): Promi
     boxen(
       chalk.bold.cyan('🔮 AI Phase Builder - Idea Refinement') +
       '\n\n' +
-      chalk.dim('Transforming your idea into a structured project plan'),
+      chalk.dim('Fully automated via Cursor CLI'),
       {
         padding: 1,
         margin: { top: 1, bottom: 1, left: 0, right: 0 },
@@ -67,7 +84,9 @@ export async function refineCommand(idea: string, options: RefineOptions): Promi
     await saveProjectState(state);
   }
   
-  // Stage 1: Superprompt Enhancement
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Stage 1: Superprompt Enhancement (Automated)
+  // ═══════════════════════════════════════════════════════════════════════════
   console.log(chalk.yellow('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
   console.log(chalk.yellow.bold('  🔮 STAGE 1: Superprompt Enhancement'));
   console.log(chalk.yellow('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
@@ -77,8 +96,7 @@ export async function refineCommand(idea: string, options: RefineOptions): Promi
   
   const superprompt = generateSuperpromptEnhancement(idea, globalConfig);
   const superpromptPath = await savePromptToFile(superprompt);
-  
-  console.log(chalk.green('✓ Prompt generated: ') + chalk.dim(superpromptPath));
+  console.log(chalk.dim('Prompt saved: ') + chalk.white(superpromptPath));
   
   if (globalConfig.cursor.context7_enabled && superprompt.context7Instructions) {
     console.log(chalk.dim('\nContext7 will look up:'));
@@ -87,56 +105,41 @@ export async function refineCommand(idea: string, options: RefineOptions): Promi
     });
   }
   
-  // Show the prompt and instructions
-  console.log(chalk.yellow('\n┌────────────────────────────────────────────────────────────┐'));
-  console.log(chalk.yellow('│ ') + chalk.white.bold('Action Required') + chalk.yellow('                                           │'));
-  console.log(chalk.yellow('├────────────────────────────────────────────────────────────┤'));
-  console.log(chalk.yellow('│ ') + chalk.white('1. Open Cursor in this project') + chalk.yellow('                            │'));
-  console.log(chalk.yellow('│ ') + chalk.white('2. Switch to Agent mode (Cmd+Shift+I)') + chalk.yellow('                     │'));
-  console.log(chalk.yellow('│ ') + chalk.white(`3. Select model: ${globalConfig.cursor.planning_model.padEnd(20)}`) + chalk.yellow('          │'));
-  console.log(chalk.yellow('│ ') + chalk.white('4. Paste the prompt (copied to clipboard)') + chalk.yellow('                 │'));
-  console.log(chalk.yellow('│ ') + chalk.white('5. Run and review the enhanced specification') + chalk.yellow('              │'));
-  console.log(chalk.yellow('└────────────────────────────────────────────────────────────┘\n'));
+  // Run Stage 1 automatically
+  const spinner1 = ora({
+    text: 'Enhancing your idea with AI...',
+    spinner: 'dots12',
+  }).start();
   
-  // Copy prompt to clipboard
-  const fullPrompt = buildCursorPrompt(superprompt);
-  await copyToClipboard(fullPrompt);
-  console.log(chalk.green('✓ Prompt copied to clipboard!\n'));
+  const startTime1 = Date.now();
+  const fullPrompt1 = buildCursorPrompt(superprompt);
   
-  // Also save full prompt for reference
-  const promptRefPath = path.join(getProjectPhasesDir(), 'stage1-superprompt.md');
-  await fs.writeFile(promptRefPath, fullPrompt);
-  console.log(chalk.dim(`Full prompt saved to: ${promptRefPath}\n`));
+  const stage1Result = await runPlanningTask(fullPrompt1);
+  const elapsed1 = Math.round((Date.now() - startTime1) / 1000);
   
-  // Wait for user to complete stage 1
-  const stage1Answer = await inquirer.prompt([
-    {
-      type: 'editor',
-      name: 'enhanced_spec',
-      message: 'Paste the enhanced specification from Cursor (opens editor):',
-      default: '# Enhanced Project Specification\n\n[Paste Cursor output here]',
-      waitForUseInput: true,
-    },
-  ]);
-  
-  if (!stage1Answer.enhanced_spec || stage1Answer.enhanced_spec.includes('[Paste Cursor output here]')) {
-    console.log(chalk.yellow('\n⚠️  No enhanced spec provided. You can continue later with:'));
-    console.log(chalk.cyan('  ai-phases refine "' + idea + '"'));
-    return;
+  if (!stage1Result.success) {
+    spinner1.fail(`Stage 1 failed after ${elapsed1}s`);
+    console.log(chalk.red('\nError: ') + chalk.dim(stage1Result.error || 'Unknown error'));
+    console.log(chalk.yellow('\nRetry with: ai-phases refine "' + idea + '"'));
+    process.exit(1);
   }
   
-  // Save enhanced spec
+  spinner1.succeed(`Enhanced specification generated in ${elapsed1}s`);
+  
+  // Extract and save enhanced spec
+  const enhancedSpec = extractMarkdown(stage1Result.output);
   const enhancedSpecPath = path.join(getProjectPhasesDir(), 'enhanced-spec.md');
-  await fs.writeFile(enhancedSpecPath, stage1Answer.enhanced_spec);
+  await fs.writeFile(enhancedSpecPath, enhancedSpec);
+  console.log(chalk.green('✓ Saved: ') + chalk.dim(enhancedSpecPath));
   
   if (state) {
-    state.enhanced_idea = stage1Answer.enhanced_spec;
+    state.enhanced_idea = enhancedSpec;
     await saveProjectState(state);
   }
   
-  console.log(chalk.green('\n✓ Enhanced specification saved!\n'));
-  
-  // Stage 2: Phase Structuring
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Stage 2: Phase Structuring (Automated)
+  // ═══════════════════════════════════════════════════════════════════════════
   console.log(chalk.blue('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
   console.log(chalk.blue.bold('  📋 STAGE 2: Phase Structuring'));
   console.log(chalk.blue('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
@@ -144,53 +147,44 @@ export async function refineCommand(idea: string, options: RefineOptions): Promi
   console.log(chalk.dim('Model: ') + chalk.cyan(globalConfig.cursor.planning_model));
   console.log(chalk.dim('Purpose: Break the spec into executable development phases\n'));
   
-  const phasePrompt = generatePhaseStructuring(stage1Answer.enhanced_spec, globalConfig);
+  const phasePrompt = generatePhaseStructuring(enhancedSpec, globalConfig);
   const phasePromptPath = await savePromptToFile(phasePrompt);
+  console.log(chalk.dim('Prompt saved: ') + chalk.white(phasePromptPath));
   
-  console.log(chalk.green('✓ Prompt generated: ') + chalk.dim(phasePromptPath));
+  // Run Stage 2 automatically
+  const spinner2 = ora({
+    text: 'Structuring project into phases...',
+    spinner: 'dots12',
+  }).start();
   
-  // Copy to clipboard
-  const phaseFullPrompt = buildCursorPrompt(phasePrompt);
-  await copyToClipboard(phaseFullPrompt);
-  console.log(chalk.green('✓ Prompt copied to clipboard!\n'));
+  const startTime2 = Date.now();
+  const fullPrompt2 = buildCursorPrompt(phasePrompt);
   
-  // Save full prompt
-  const phasePromptRefPath = path.join(getProjectPhasesDir(), 'stage2-phase-structuring.md');
-  await fs.writeFile(phasePromptRefPath, phaseFullPrompt);
+  const stage2Result = await runPlanningTask(fullPrompt2);
+  const elapsed2 = Math.round((Date.now() - startTime2) / 1000);
   
-  console.log(chalk.yellow('\n┌────────────────────────────────────────────────────────────┐'));
-  console.log(chalk.yellow('│ ') + chalk.white.bold('Action Required') + chalk.yellow('                                           │'));
-  console.log(chalk.yellow('├────────────────────────────────────────────────────────────┤'));
-  console.log(chalk.yellow('│ ') + chalk.white('1. Paste the new prompt in Cursor') + chalk.yellow('                         │'));
-  console.log(chalk.yellow('│ ') + chalk.white('2. Review the generated phase plan') + chalk.yellow('                        │'));
-  console.log(chalk.yellow('│ ') + chalk.white('3. Copy the phase plan back here') + chalk.yellow('                          │'));
-  console.log(chalk.yellow('└────────────────────────────────────────────────────────────┘\n'));
-  
-  // Wait for phase plan
-  const stage2Answer = await inquirer.prompt([
-    {
-      type: 'editor',
-      name: 'phase_plan',
-      message: 'Paste the phase plan from Cursor (opens editor):',
-      default: '# Phase Plan\n\n[Paste Cursor output here]',
-      waitForUseInput: true,
-    },
-  ]);
-  
-  if (!stage2Answer.phase_plan || stage2Answer.phase_plan.includes('[Paste Cursor output here]')) {
-    console.log(chalk.yellow('\n⚠️  No phase plan provided. Run again when ready.'));
-    return;
+  if (!stage2Result.success) {
+    spinner2.fail(`Stage 2 failed after ${elapsed2}s`);
+    console.log(chalk.red('\nError: ') + chalk.dim(stage2Result.error || 'Unknown error'));
+    console.log(chalk.yellow('\nThe enhanced spec has been saved. Retry phase structuring later.'));
+    process.exit(1);
   }
   
-  // Save phase plan
-  const phasePlanPath = path.join(getProjectPhasesDir(), 'plan.md');
-  await fs.writeFile(phasePlanPath, stage2Answer.phase_plan);
+  spinner2.succeed(`Phase plan generated in ${elapsed2}s`);
   
-  // Parse phase plan and create phase states
-  const spinner = ora('Processing phase plan...').start();
+  // Extract and save phase plan
+  const phasePlan = extractMarkdown(stage2Result.output);
+  const phasePlanPath = path.join(getProjectPhasesDir(), 'plan.md');
+  await fs.writeFile(phasePlanPath, phasePlan);
+  console.log(chalk.green('✓ Saved: ') + chalk.dim(phasePlanPath));
+  
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Process Phase Plan
+  // ═══════════════════════════════════════════════════════════════════════════
+  const spinner3 = ora('Processing phase plan...').start();
   
   try {
-    const phases = parsePhasePlan(stage2Answer.phase_plan, globalConfig.defaults.max_retry_attempts);
+    const phases = parsePhasePlan(phasePlan, globalConfig.defaults.max_retry_attempts);
     
     if (state) {
       state.phases = phases;
@@ -207,15 +201,17 @@ export async function refineCommand(idea: string, options: RefineOptions): Promi
       await fs.writeJson(path.join(phaseDir, 'state.json'), phase, { spaces: 2 });
     }
     
-    spinner.succeed('Phase plan processed!');
+    spinner3.succeed('Phase plan processed!');
     
     // Show summary
+    const totalTime = elapsed1 + elapsed2;
     console.log(chalk.green('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
     console.log(chalk.green.bold('  ✅ Project Plan Complete!'));
     console.log(chalk.green('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
     
     console.log(chalk.white(`Project: ${state?.project_name || 'Unknown'}`));
-    console.log(chalk.white(`Total Phases: ${phases.length}\n`));
+    console.log(chalk.white(`Total Phases: ${phases.length}`));
+    console.log(chalk.dim(`Generated in: ${totalTime}s\n`));
     
     console.log(chalk.dim('Phase Overview:'));
     phases.forEach(p => {
@@ -223,12 +219,12 @@ export async function refineCommand(idea: string, options: RefineOptions): Promi
       console.log(chalk.dim(`     ${p.tasks.length} tasks, ${p.validation_criteria.length} validation criteria`));
     });
     
-    console.log(chalk.white('\nNext step:\n'));
+    console.log(chalk.white('\n🚀 Ready to execute! Run:\n'));
     console.log(chalk.cyan('  ai-phases run --phase 1\n'));
-    console.log(chalk.dim('Or view status with: ai-phases status\n'));
+    console.log(chalk.dim('Or view full status with: ai-phases status\n'));
     
   } catch (error) {
-    spinner.fail('Failed to process phase plan');
+    spinner3.fail('Failed to process phase plan');
     console.error(chalk.red(error instanceof Error ? error.message : 'Unknown error'));
     console.log(chalk.yellow('\nThe phase plan has been saved. You can edit it at:'));
     console.log(chalk.cyan(`  ${phasePlanPath}`));
@@ -329,28 +325,4 @@ function parsePhasePlan(planContent: string, maxAttempts: number): PhaseState[] 
   }
   
   return phases;
-}
-
-/**
- * Copy text to clipboard (cross-platform)
- */
-async function copyToClipboard(text: string): Promise<void> {
-  try {
-    const platform = process.platform;
-    let command: string;
-    
-    if (platform === 'darwin') {
-      command = 'pbcopy';
-    } else if (platform === 'linux') {
-      command = 'xclip -selection clipboard';
-    } else if (platform === 'win32') {
-      command = 'clip';
-    } else {
-      return; // Unsupported platform
-    }
-    
-    const child = await execAsync(`echo "${text.replace(/"/g, '\\"')}" | ${command}`);
-  } catch {
-    // Clipboard copy failed, but we already saved to file
-  }
 }

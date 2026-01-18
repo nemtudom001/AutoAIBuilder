@@ -4,12 +4,14 @@ import os from 'os';
 import chalk from 'chalk';
 import inquirer from 'inquirer';
 import boxen from 'boxen';
+import ora from 'ora';
 
 export interface GlobalConfig {
   version: string;
   setup_complete: boolean;
   cursor: {
     enabled: boolean;
+    api_key: string;
     planning_model: string;
     execution_model: string;
     context7_enabled: boolean;
@@ -90,6 +92,7 @@ export function getDefaultGlobalConfig(): GlobalConfig {
     setup_complete: false,
     cursor: {
       enabled: true,
+      api_key: '',
       planning_model: 'claude-opus-4.5',
       execution_model: 'gemini-3-flash',
       context7_enabled: false,
@@ -118,9 +121,9 @@ export async function runSetupWizard(): Promise<GlobalConfig> {
     boxen(
       chalk.bold.cyan('🚀 AI Phase Builder - First Time Setup') +
       '\n\n' +
-      chalk.white('Works seamlessly with your Cursor subscription.') +
+      chalk.white('Fully automated development with Cursor CLI.') +
       '\n' +
-      chalk.dim('Zero API keys required!'),
+      chalk.dim('Uses your Cursor subscription - no external API keys!'),
       {
         padding: 1,
         margin: 1,
@@ -130,11 +133,64 @@ export async function runSetupWizard(): Promise<GlobalConfig> {
     )
   );
 
-  console.log(chalk.white('\nThis tool orchestrates AI-powered development in Cursor:\n'));
+  console.log(chalk.white('\nThis tool orchestrates AI-powered development via Cursor CLI:\n'));
   console.log(chalk.green('  ✓ Claude Opus    ') + chalk.dim('→ Planning & reasoning'));
   console.log(chalk.green('  ✓ Gemini Flash   ') + chalk.dim('→ Coding & execution'));
-  console.log(chalk.green('  ✓ Context7 MCP   ') + chalk.dim('→ Documentation lookup (free)\n'));
+  console.log(chalk.green('  ✓ Context7 MCP   ') + chalk.dim('→ Documentation lookup (free)'));
+  console.log(chalk.green('  ✓ Full Automation') + chalk.dim('→ No manual prompts or copy-paste\n'));
 
+  // Cursor API Key
+  console.log(chalk.yellow('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
+  console.log(chalk.yellow('  Cursor CLI Authentication\n'));
+  console.log(chalk.white('  To run phases automatically, we need your Cursor API key.'));
+  console.log(chalk.dim('  Get it from: Cursor Settings → Account → API Key'));
+  console.log(chalk.dim('  Or run: cursor-agent login\n'));
+  console.log(chalk.yellow('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
+
+  const apiKeyAnswer = await inquirer.prompt([
+    {
+      type: 'password',
+      name: 'api_key',
+      message: 'Cursor API Key:',
+      mask: '*',
+      validate: (input: string) => {
+        if (!input || input.trim().length < 10) {
+          return 'Please enter a valid Cursor API key';
+        }
+        return true;
+      },
+    },
+  ]);
+
+  // Verify the API key works
+  const verifySpinner = ora('Verifying API key...').start();
+  const keyValid = await verifyCursorApiKey(apiKeyAnswer.api_key);
+  
+  if (!keyValid) {
+    verifySpinner.fail('API key verification failed');
+    console.log(chalk.red('\nCould not verify the API key. Please check:'));
+    console.log(chalk.dim('  1. The key is correct'));
+    console.log(chalk.dim('  2. cursor-agent CLI is installed (curl https://cursor.com/install -fsS | bash)'));
+    console.log(chalk.dim('  3. Your Cursor subscription is active\n'));
+    
+    const retryAnswer = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'continue_anyway',
+        message: 'Continue setup anyway? (you can fix this later)',
+        default: false,
+      },
+    ]);
+    
+    if (!retryAnswer.continue_anyway) {
+      console.log(chalk.dim('\nSetup cancelled. Run ') + chalk.cyan('ai-phases config --setup') + chalk.dim(' when ready.\n'));
+      process.exit(1);
+    }
+  } else {
+    verifySpinner.succeed('API key verified!');
+  }
+
+  // Context7 check
   const answers = await inquirer.prompt([
     {
       type: 'confirm',
@@ -152,20 +208,6 @@ export async function runSetupWizard(): Promise<GlobalConfig> {
     console.log(chalk.white('  3. Add Context7: ') + chalk.cyan('https://context7.com/docs/clients/cursor'));
     console.log(chalk.white('  4. Restart Cursor'));
     console.log(chalk.yellow('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
-
-    const continueAnswer = await inquirer.prompt([
-      {
-        type: 'confirm',
-        name: 'continue',
-        message: 'Continue setup anyway? (You can enable Context7 later)',
-        default: true,
-      },
-    ]);
-
-    if (!continueAnswer.continue) {
-      console.log(chalk.dim('\nSetup cancelled. Run ') + chalk.cyan('ai-phases config --setup') + chalk.dim(' when ready.\n'));
-      process.exit(0);
-    }
   }
 
   // Default preferences
@@ -197,6 +239,7 @@ export async function runSetupWizard(): Promise<GlobalConfig> {
     setup_complete: true,
     cursor: {
       enabled: true,
+      api_key: apiKeyAnswer.api_key,
       planning_model: 'claude-opus-4.5',
       execution_model: 'gemini-3-flash',
       context7_enabled: answers.context7_enabled,
@@ -215,15 +258,34 @@ export async function runSetupWizard(): Promise<GlobalConfig> {
   console.log(chalk.green.bold('  ✅ Setup Complete!'));
   console.log(chalk.green('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
   console.log(chalk.dim('Configuration saved to: ') + chalk.white(GLOBAL_CONFIG_FILE));
-  console.log(chalk.dim('\nModel routing (via Cursor):'));
+  console.log(chalk.dim('\nModel routing (via Cursor CLI):'));
   console.log(chalk.white('  • Planning phases  → ') + chalk.cyan('Claude Opus'));
   console.log(chalk.white('  • Coding phases    → ') + chalk.cyan('Gemini Flash'));
-  console.log(chalk.white('  • Documentation    → ') + chalk.cyan('Context7 MCP\n'));
+  console.log(chalk.white('  • Documentation    → ') + chalk.cyan('Context7 MCP'));
+  console.log(chalk.white('  • Execution        → ') + chalk.cyan('Fully automated\n'));
 
   console.log(chalk.green('🎉 Ready! Try:\n'));
   console.log(chalk.cyan('  ai-phases refine "your project idea"\n'));
 
   return config;
+}
+
+/**
+ * Verify the Cursor API key works by attempting a simple CLI call
+ */
+async function verifyCursorApiKey(apiKey: string): Promise<boolean> {
+  try {
+    const { exec } = await import('child_process');
+    const { promisify } = await import('util');
+    const execAsync = promisify(exec);
+    
+    // Try to run cursor-agent with the API key to verify it works
+    const env = { ...process.env, CURSOR_API_KEY: apiKey };
+    await execAsync('cursor-agent --version', { env, timeout: 10000 });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function showConfig(): Promise<void> {

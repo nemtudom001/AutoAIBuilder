@@ -1,27 +1,32 @@
-# AI Phase Builder 🚀
+# AI Phase Builder
 
-AI-powered project phase orchestration for Cursor IDE. Transform your ideas into structured, executable development phases with intelligent handovers and rollback support.
+Fully automated AI-powered project phase orchestration for Cursor IDE. Transform your ideas into structured, executable development phases that run automatically via the Cursor CLI.
 
 ## Features
 
-- **🔮 Idea Refinement Chain** - Turn rough ideas into comprehensive specs using Claude Opus
-- **📋 Phase Structuring** - Break projects into logical, executable phases
-- **🔄 Smart Handovers** - Context-aware transitions between phases with summarization
-- **↩️ Rollback Support** - Retry failed phases with learned context (max 3 attempts)
-- **🔍 Drift Detection** - Track manual changes made outside of phase runs
-- **📚 Context7 Integration** - Always use up-to-date documentation
-- **💾 Git Integration** - Auto-commit checkpoints for each phase
+- **Fully Automated** - No manual prompting or copy-paste. Everything runs via Cursor CLI
+- **Idea Refinement Chain** - Turn rough ideas into comprehensive specs using Claude Opus
+- **Phase Structuring** - Break projects into logical, executable phases
+- **Smart Handovers** - Auto-generated context-aware transitions between phases
+- **Rollback Support** - Retry failed phases with learned context (max 3 attempts)
+- **Drift Detection** - Track manual changes made outside of phase runs
+- **Context7 Integration** - Always use up-to-date documentation
+- **Git Integration** - Auto-commit checkpoints for each phase
 
 ## Requirements
 
 - Node.js 18+
 - Cursor IDE with active subscription
+- Cursor CLI (`cursor-agent`) installed
 - Context7 MCP enabled (recommended)
 
 ## Installation
 
 ```bash
-# Global install
+# Install Cursor CLI first
+curl https://cursor.com/install -fsS | bash
+
+# Global install of AI Phase Builder
 npm install -g ai-phase-builder
 
 # Or run directly
@@ -31,18 +36,20 @@ npx ai-phase-builder
 ## Quick Start
 
 ```bash
-# First time setup (zero API keys needed!)
+# First time setup - you'll need your Cursor API key
 ai-phases config --setup
 
 # Initialize in your project
 cd your-project
 ai-phases init
 
-# Transform your idea into a structured plan
+# Transform your idea into a structured plan (fully automated)
 ai-phases refine "build a crypto price dashboard with real-time updates"
 
-# Run phases
+# Run phases (fully automated)
 ai-phases run --phase 1
+ai-phases run --phase 2
+# ...
 ```
 
 ## Commands
@@ -50,36 +57,46 @@ ai-phases run --phase 1
 | Command | Description |
 |---------|-------------|
 | `ai-phases init` | Initialize AI Phase Builder in current project |
-| `ai-phases refine <idea>` | Transform idea into enhanced spec + phase plan |
+| `ai-phases refine <idea>` | Transform idea into enhanced spec + phase plan (automated) |
 | `ai-phases plan` | Create or edit phase plan manually |
-| `ai-phases run --phase N` | Execute a specific phase |
+| `ai-phases run --phase N` | Execute a specific phase (automated) |
 | `ai-phases status` | Show current project status |
-| `ai-phases handover` | Generate handover summary for current phase |
+| `ai-phases handover` | Generate handover summary for current phase (automated) |
 | `ai-phases rollback` | Rollback a failed phase to retry |
 | `ai-phases sync` | Detect and reconcile manual changes |
 | `ai-phases config` | Manage configuration |
 
 ## How It Works
 
-### 1. Idea Refinement Chain
+### 1. Idea Refinement Chain (Automated)
 
-Your rough idea goes through a three-stage enhancement process:
+Your rough idea goes through a fully automated two-stage enhancement:
 
 ```
 Your Idea → [Superprompt Enhancement] → [Phase Structuring] → Executable Plan
-              (Claude Opus)             (Claude Opus)
+              Claude Opus (auto)         Claude Opus (auto)
 ```
+
+No manual input required. The CLI runs both stages automatically via `cursor-agent`.
 
 ### 2. Model Routing
 
 - **Claude Opus** - Planning, architecture decisions, complex reasoning
 - **Gemini Flash** - Coding, code review, handover generation
 
-All models are accessed through your Cursor subscription - no additional API keys needed!
+All models are accessed through your Cursor subscription via the CLI.
 
-### 3. Phase Execution & Clean Context
+### 3. Phase Execution (Fully Automated)
 
-Each phase runs with **minimal, focused context**:
+Each phase runs automatically:
+
+```bash
+ai-phases run --phase 1
+# → cursor-agent executes the phase prompt
+# → Changes are applied automatically
+# → Handover is generated for next phase
+# → Git checkpoint is created
+```
 
 ```
 Phase N Context (ONLY these):
@@ -96,16 +113,10 @@ NOT included (cleared):
 └── Previous attempt details (except failures)
 ```
 
-This "clean context" approach:
-- Keeps prompts efficient (~500-1000 tokens vs 5000+)
-- Prevents context pollution across phases
-- Forces handovers to capture essential info
-- Lets Context7 provide fresh documentation each phase
-
 ### 4. Failure Handling
 
 - Max 3 attempts per phase before blocking
-- Failure reports capture what went wrong
+- Failure reports capture what went wrong automatically
 - Rollback notes guide the next attempt
 - Blocked phases require manual intervention
 
@@ -119,12 +130,15 @@ When initialized, creates:
 ├── state.json        # Phase tracking state
 ├── context.md        # Persistent project context
 ├── plan.md           # Master phase plan
+├── enhanced-spec.md  # AI-enhanced specification
 ├── phases/
 │   ├── phase-1/
 │   │   ├── state.json
 │   │   ├── prompt.md
 │   │   ├── handover.md
 │   │   └── attempt-1/
+│   │       ├── output.md
+│   │       └── error.md (if failed)
 │   └── phase-2/
 │       └── ...
 ├── logs/
@@ -142,6 +156,7 @@ Global config stored at: `~/.ai-phase-builder/config.json`
 ```json
 {
   "cursor": {
+    "api_key": "YOUR_CURSOR_API_KEY",
     "planning_model": "claude-opus-4.5",
     "execution_model": "gemini-3-flash",
     "context7_enabled": true
@@ -155,6 +170,15 @@ Global config stored at: `~/.ai-phase-builder/config.json`
 }
 ```
 
+### Getting Your Cursor API Key
+
+1. Open Cursor IDE
+2. Go to Settings → Account → API Key
+3. Copy the key
+4. Run `ai-phases config --setup` and paste it when prompted
+
+Or set the environment variable: `export CURSOR_API_KEY=your-key`
+
 ## Context7 Integration
 
 Context7 MCP provides up-to-date documentation directly in Cursor. Enable it:
@@ -167,23 +191,61 @@ Context7 MCP provides up-to-date documentation directly in Cursor. Enable it:
 ## Example Workflow
 
 ```bash
-# 1. Start with an idea
+# 1. Start with an idea (runs automatically)
 ai-phases refine "build a task management app with drag-and-drop"
 
-# 2. Review and approve the generated plan
-# 3. Execute phases one by one
+# Output:
+# ✓ Enhanced specification generated in 45s
+# ✓ Phase plan generated in 32s
+# ✓ 5 phases created
+#
+# Ready to execute! Run:
+#   ai-phases run --phase 1
+
+# 2. Execute phases (each runs automatically)
 ai-phases run --phase 1
-ai-phases handover --phase 1
+# → Phase executes via cursor-agent
+# → Handover auto-generated
+# → Git checkpoint created
+
 ai-phases run --phase 2
+ai-phases run --phase 3
 # ...
 
-# 4. If a phase fails
+# 3. If a phase fails, it auto-saves the error
 ai-phases rollback --phase 3
 ai-phases run --phase 3
 
-# 5. Check status anytime
+# 4. Check status anytime
 ai-phases status --verbose
 ```
+
+## Dry Run Mode
+
+Preview what will be executed without running:
+
+```bash
+ai-phases run --phase 1 --dry-run
+```
+
+## Troubleshooting
+
+### "cursor-agent CLI not found"
+Install the Cursor CLI:
+```bash
+curl https://cursor.com/install -fsS | bash
+```
+
+### "Cursor API key not configured"
+Run setup again:
+```bash
+ai-phases config --setup
+```
+
+### Phase keeps failing
+1. Check the error in `.ai-phases/phases/phase-N/attempt-X/error.md`
+2. Use `ai-phases rollback --phase N` to reset
+3. Consider simplifying the phase tasks in `plan.md`
 
 ## License
 

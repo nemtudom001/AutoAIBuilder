@@ -1,7 +1,6 @@
 import fs from 'fs-extra';
 import path from 'path';
 import chalk from 'chalk';
-import inquirer from 'inquirer';
 import ora from 'ora';
 import boxen from 'boxen';
 import { loadGlobalConfig, getProjectPhasesDir } from '../../core/config-manager.js';
@@ -24,10 +23,11 @@ import {
   createPhaseCheckpoint,
   getGitStatus,
 } from '../../core/git-integration.js';
-import { exec } from 'child_process';
-import { promisify } from 'util';
-
-const execAsync = promisify(exec);
+import {
+  runCursorAgent,
+  isCursorCliInstalled,
+  getCursorApiKey,
+} from '../../core/cursor-cli.js';
 
 interface RunOptions {
   phase?: string;
@@ -39,6 +39,21 @@ export async function runCommand(options: RunOptions): Promise<void> {
   const globalConfig = await loadGlobalConfig();
   if (!globalConfig || !globalConfig.setup_complete) {
     console.log(chalk.yellow('Please run setup first: ai-phases config --setup'));
+    process.exit(1);
+  }
+  
+  // Verify CLI setup
+  const cliInstalled = await isCursorCliInstalled();
+  if (!cliInstalled) {
+    console.log(chalk.red('\n✗ cursor-agent CLI not found.'));
+    console.log(chalk.dim('Install with: curl https://cursor.com/install -fsS | bash\n'));
+    process.exit(1);
+  }
+  
+  const apiKey = await getCursorApiKey();
+  if (!apiKey) {
+    console.log(chalk.red('\n✗ Cursor API key not configured.'));
+    console.log(chalk.dim('Run: ai-phases config --setup\n'));
     process.exit(1);
   }
   
@@ -78,19 +93,10 @@ export async function runCommand(options: RunOptions): Promise<void> {
   
   // Check if phase is already completed
   if (phase.status === 'completed' && !options.auto) {
-    const { rerun } = await inquirer.prompt([
-      {
-        type: 'confirm',
-        name: 'rerun',
-        message: `Phase ${phaseNumber} is already completed. Run again?`,
-        default: false,
-      },
-    ]);
-    
-    if (!rerun) {
-      console.log(chalk.dim('Skipped.'));
-      return;
-    }
+    console.log(chalk.yellow(`\n⚠️  Phase ${phaseNumber} is already completed.`));
+    console.log(chalk.dim('Use --auto to force re-run, or continue to next phase:\n'));
+    console.log(chalk.cyan(`  ai-phases run --phase ${phaseNumber + 1}\n`));
+    return;
   }
   
   // Load previous handover if exists
@@ -149,83 +155,83 @@ export async function runCommand(options: RunOptions): Promise<void> {
   if (options.dryRun) {
     console.log(chalk.yellow('\n━━━ DRY RUN - Prompt Preview ━━━\n'));
     console.log(buildCursorPrompt(prompt));
-    console.log(chalk.yellow('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
+    console.log(chalk.yellow('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
     return;
   }
   
-  // Save prompt and create attempt
-  const spinner = ora('Preparing phase...').start();
+  // Create new attempt
+  const attempt = await createNewAttempt(phaseNumber);
   
-  try {
-    // Create new attempt
-    const attempt = await createNewAttempt(phaseNumber);
-    
-    // Save prompt to attempt directory
-    const promptPath = await savePromptToFile(prompt, phaseNumber, attempt.attempt_number);
-    
-    // Copy to clipboard
-    const fullPrompt = buildCursorPrompt(prompt);
-    await copyToClipboard(fullPrompt);
-    
-    spinner.succeed('Phase prepared!');
-    
-    console.log(chalk.green('\n✓ Prompt saved: ') + chalk.dim(promptPath));
-    console.log(chalk.green('✓ Prompt copied to clipboard!\n'));
-    
-    // Instructions
-    console.log(chalk.yellow('┌────────────────────────────────────────────────────────────┐'));
-    console.log(chalk.yellow('│ ') + chalk.white.bold('Action Required') + chalk.yellow('                                           │'));
-    console.log(chalk.yellow('├────────────────────────────────────────────────────────────┤'));
-    console.log(chalk.yellow('│ ') + chalk.white('1. Open Cursor in this project') + chalk.yellow('                            │'));
-    console.log(chalk.yellow('│ ') + chalk.white('2. Switch to Agent mode (Cmd+Shift+I)') + chalk.yellow('                     │'));
-    console.log(chalk.yellow('│ ') + chalk.white(`3. Select model: ${prompt.modelName.substring(0, 25).padEnd(25)}`) + chalk.yellow('        │'));
-    console.log(chalk.yellow('│ ') + chalk.white('4. Paste the prompt (Cmd+V)') + chalk.yellow('                               │'));
-    console.log(chalk.yellow('│ ') + chalk.white('5. Review and approve changes') + chalk.yellow('                             │'));
-    console.log(chalk.yellow('└────────────────────────────────────────────────────────────┘\n'));
-    
-    // Wait for completion
-    const { result } = await inquirer.prompt([
-      {
-        type: 'list',
-        name: 'result',
-        message: 'Phase execution result:',
-        choices: [
-          { name: '✓ Completed successfully', value: 'completed' },
-          { name: '✗ Failed - will retry', value: 'failed' },
-          { name: '⏸ Pause - continue later', value: 'pause' },
-        ],
-      },
-    ]);
-    
-    if (result === 'completed') {
-      await handlePhaseCompleted(phaseNumber, attempt.attempt_number, globalConfig);
-    } else if (result === 'failed') {
-      await handlePhaseFailed(phaseNumber, attempt.attempt_number, phase.max_attempts);
-    } else {
-      console.log(chalk.dim('\nPaused. Resume with:'));
-      console.log(chalk.cyan(`  ai-phases run --phase ${phaseNumber}\n`));
-    }
-    
-  } catch (error) {
-    spinner.fail('Failed to prepare phase');
-    console.error(chalk.red(error instanceof Error ? error.message : 'Unknown error'));
+  // Save prompt to attempt directory
+  const promptPath = await savePromptToFile(prompt, phaseNumber, attempt.attempt_number);
+  console.log(chalk.dim('Prompt saved: ') + chalk.white(promptPath));
+  
+  // Execute phase via cursor-agent
+  console.log(chalk.yellow('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
+  console.log(chalk.yellow.bold('  🚀 Executing Phase via Cursor CLI'));
+  console.log(chalk.yellow('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
+  
+  const spinner = ora({
+    text: `Running phase ${phaseNumber} with ${prompt.modelName}...`,
+    spinner: 'dots12',
+  }).start();
+  
+  const startTime = Date.now();
+  const fullPrompt = buildCursorPrompt(prompt);
+  
+  const result = await runCursorAgent({
+    prompt: fullPrompt,
+    model: prompt.modelName,
+    workingDir: process.cwd(),
+    timeout: 600000, // 10 minutes
+    onOutput: (chunk) => {
+      // Update spinner with progress
+      const elapsed = Math.round((Date.now() - startTime) / 1000);
+      const lines = chunk.split('\n').filter(l => l.trim());
+      if (lines.length > 0) {
+        const lastLine = lines[lines.length - 1].substring(0, 50);
+        spinner.text = `Running phase ${phaseNumber} (${elapsed}s) ${chalk.dim(lastLine + '...')}`;
+      }
+    },
+  });
+  
+  const elapsed = Math.round((Date.now() - startTime) / 1000);
+  
+  if (result.success) {
+    spinner.succeed(`Phase ${phaseNumber} completed in ${elapsed}s`);
+    await handlePhaseCompleted(phaseNumber, attempt.attempt_number, globalConfig, result);
+  } else {
+    spinner.fail(`Phase ${phaseNumber} failed after ${elapsed}s`);
+    await handlePhaseFailed(phaseNumber, attempt.attempt_number, phase.max_attempts, result.error || 'Unknown error');
   }
 }
 
 async function handlePhaseCompleted(
   phaseNumber: number,
   attemptNumber: number,
-  globalConfig: any
+  globalConfig: any,
+  result: { output: string; filesModified?: string[] }
 ): Promise<void> {
   const spinner = ora('Completing phase...').start();
   
   try {
-    // Get modified files from git
+    // Get modified files from git (more reliable than parsing output)
     const gitStatus = await getGitStatus();
     const filesModified = [...gitStatus.modifiedFiles, ...gitStatus.untrackedFiles];
     
     // Mark attempt completed
     await markAttemptCompleted(phaseNumber, attemptNumber, filesModified);
+    
+    // Save agent output
+    const outputPath = path.join(
+      getProjectPhasesDir(),
+      'phases',
+      `phase-${phaseNumber}`,
+      `attempt-${attemptNumber}`,
+      'output.md'
+    );
+    await fs.ensureDir(path.dirname(outputPath));
+    await fs.writeFile(outputPath, result.output);
     
     // Auto-commit if enabled
     if (globalConfig.defaults.auto_commit) {
@@ -262,26 +268,16 @@ async function handlePhaseCompleted(
       console.log();
     }
     
-    // Prompt for handover
-    const { createHandover } = await inquirer.prompt([
-      {
-        type: 'confirm',
-        name: 'createHandover',
-        message: 'Generate handover summary for next phase?',
-        default: true,
-      },
-    ]);
-    
-    if (createHandover) {
-      console.log(chalk.cyan('\nRun: ai-phases handover --phase ' + phaseNumber + '\n'));
-    }
+    // Generate handover automatically
+    console.log(chalk.dim('Generating handover summary...'));
+    await generateAutoHandover(phaseNumber, result.output, filesModified);
     
     // Show next steps
     if (state && state.status !== 'completed') {
-      console.log(chalk.white('Next phase:'));
+      console.log(chalk.white('\nNext phase:'));
       console.log(chalk.cyan(`  ai-phases run --phase ${phaseNumber + 1}\n`));
     } else {
-      console.log(chalk.green.bold('🎉 All phases complete! Project finished.\n'));
+      console.log(chalk.green.bold('\n🎉 All phases complete! Project finished.\n'));
     }
     
   } catch (error) {
@@ -293,58 +289,118 @@ async function handlePhaseCompleted(
 async function handlePhaseFailed(
   phaseNumber: number,
   attemptNumber: number,
-  maxAttempts: number
+  maxAttempts: number,
+  errorMessage: string
 ): Promise<void> {
-  console.log(chalk.yellow('\n━━━ Failure Report ━━━\n'));
+  console.log(chalk.red('\n━━━ Phase Failed ━━━\n'));
+  console.log(chalk.dim('Error: ') + chalk.red(errorMessage));
   
-  const { errorSummary, suggestedFix } = await inquirer.prompt([
-    {
-      type: 'editor',
-      name: 'errorSummary',
-      message: 'What went wrong? (opens editor)',
-      default: 'Describe the error or failure...',
-    },
-    {
-      type: 'editor',
-      name: 'suggestedFix',
-      message: 'Suggested fix for next attempt? (opens editor)',
-      default: 'What should be tried differently...',
-    },
-  ]);
+  // Save error report
+  const errorPath = path.join(
+    getProjectPhasesDir(),
+    'phases',
+    `phase-${phaseNumber}`,
+    `attempt-${attemptNumber}`,
+    'error.md'
+  );
+  await fs.ensureDir(path.dirname(errorPath));
+  await fs.writeFile(errorPath, `# Phase ${phaseNumber} - Attempt ${attemptNumber} Error\n\n${errorMessage}`);
   
-  await markAttemptFailed(phaseNumber, attemptNumber, errorSummary, suggestedFix);
+  // Mark attempt failed
+  await markAttemptFailed(
+    phaseNumber,
+    attemptNumber,
+    errorMessage,
+    'Review error and retry with: ai-phases run --phase ' + phaseNumber
+  );
   
   const remainingAttempts = maxAttempts - attemptNumber;
   
   if (remainingAttempts > 0) {
     console.log(chalk.yellow(`\n⚠️  Attempt ${attemptNumber} failed. ${remainingAttempts} attempt(s) remaining.\n`));
-    console.log(chalk.dim('Failure report saved. To retry:'));
+    console.log(chalk.dim('Error report saved. To retry:'));
     console.log(chalk.cyan(`  ai-phases run --phase ${phaseNumber}\n`));
     console.log(chalk.dim('Or to rollback to before this phase:'));
     console.log(chalk.cyan(`  ai-phases rollback --phase ${phaseNumber}\n`));
   } else {
+    // Create BLOCKED.md
+    const blockedPath = path.join(
+      getProjectPhasesDir(),
+      'phases',
+      `phase-${phaseNumber}`,
+      'BLOCKED.md'
+    );
+    await fs.writeFile(blockedPath, `# Phase ${phaseNumber} BLOCKED
+
+This phase has failed ${maxAttempts} times and requires manual intervention.
+
+## Last Error
+${errorMessage}
+
+## Resolution Steps
+1. Review the error above and attempt outputs in \`attempt-*/\` folders
+2. Fix the underlying issue manually
+3. Run \`ai-phases rollback --phase ${phaseNumber}\` to reset
+4. Then \`ai-phases run --phase ${phaseNumber}\` to retry
+`);
+    
     console.log(chalk.red(`\n⛔ Phase ${phaseNumber} BLOCKED after ${maxAttempts} failed attempts.\n`));
-    console.log(chalk.dim('Manual intervention required. See the BLOCKED.md file for details.'));
+    console.log(chalk.dim('Manual intervention required. See:'));
+    console.log(chalk.cyan(`  ${blockedPath}\n`));
   }
 }
 
-async function copyToClipboard(text: string): Promise<void> {
+/**
+ * Auto-generate a handover summary from the phase output
+ */
+async function generateAutoHandover(
+  phaseNumber: number,
+  output: string,
+  filesModified: string[]
+): Promise<void> {
+  const { runPlanningTask, extractMarkdown } = await import('../../core/cursor-cli.js');
+  
+  const handoverPrompt = `Based on the following phase completion output, generate a concise handover summary for the next phase.
+
+## Phase ${phaseNumber} Output
+${output.substring(0, 4000)}${output.length > 4000 ? '\n...(truncated)' : ''}
+
+## Files Modified
+${filesModified.map(f => `- ${f}`).join('\n')}
+
+Generate a handover in this format:
+
+# Handover - Phase ${phaseNumber}
+
+## Completed Work
+- [Brief bullet points]
+
+## Key Files
+| File | Purpose |
+|------|---------|
+| file | what it does |
+
+## Context for Next Phase
+- [Important information for the next developer/AI]
+
+Keep it concise (under 500 words). Focus on what the next phase needs to know.`;
+
   try {
-    const platform = process.platform;
-    let command: string;
+    const result = await runPlanningTask(handoverPrompt);
     
-    if (platform === 'darwin') {
-      command = 'pbcopy';
-    } else if (platform === 'linux') {
-      command = 'xclip -selection clipboard';
-    } else if (platform === 'win32') {
-      command = 'clip';
-    } else {
-      return;
+    if (result.success) {
+      const handoverContent = extractMarkdown(result.output);
+      const handoverPath = path.join(
+        getProjectPhasesDir(),
+        'phases',
+        `phase-${phaseNumber}`,
+        'handover.md'
+      );
+      await fs.writeFile(handoverPath, handoverContent);
+      console.log(chalk.green('✓ Handover generated: ') + chalk.dim(handoverPath));
     }
-    
-    const child = await execAsync(`echo "${text.replace(/"/g, '\\"').replace(/\n/g, '\\n')}" | ${command}`);
   } catch {
-    // Silent fail
+    // Handover generation is optional, don't fail the phase
+    console.log(chalk.dim('Handover generation skipped (optional)'));
   }
 }
