@@ -98,13 +98,6 @@ export async function refineCommand(idea: string, options: RefineOptions): Promi
   const superpromptPath = await savePromptToFile(superprompt);
   console.log(chalk.dim('Prompt saved: ') + chalk.white(superpromptPath));
   
-  if (globalConfig.cursor.context7_enabled && superprompt.context7Instructions) {
-    console.log(chalk.dim('\nContext7 will look up:'));
-    superprompt.context7Instructions.forEach(q => {
-      console.log(chalk.dim('  • ') + chalk.white(q));
-    });
-  }
-  
   // Run Stage 1 automatically
   const spinner1 = ora({
     text: 'Enhancing your idea with AI...',
@@ -280,18 +273,40 @@ function parsePhasePlan(planContent: string, maxAttempts: number): PhaseState[] 
       });
     }
     
-    // Extract Context7 queries
-    const context7Queries: string[] = [];
-    const context7Section = phaseContent.match(/###\s*Context7\s*Queries\s*([\s\S]*?)(?=###|##|---|\n\n\n|$)/i);
-    if (context7Section) {
-      const queryLines = context7Section[1].match(/^-\s*\*\*[^*]+\*\*:.+$/gm) || [];
-      queryLines.forEach(line => {
-        const query = line.replace(/^-\s*/, '').trim();
-        if (query && query !== '---') {
-          context7Queries.push(query);
-        }
-      });
+    // Extract validation commands from code blocks
+    const validationCommands: string[] = [];
+    const commandsSection = phaseContent.match(/###\s*Validation\s*Commands\s*([\s\S]*?)(?=###|##|$)/i);
+    if (commandsSection) {
+      // Look for code block
+      const codeBlockMatch = commandsSection[1].match(/```(?:bash|sh)?\s*([\s\S]*?)```/i);
+      if (codeBlockMatch) {
+        const commands = codeBlockMatch[1]
+          .split('\n')
+          .map(line => line.trim())
+          .filter(line => line && !line.startsWith('#')); // Skip empty lines and comments
+        validationCommands.push(...commands);
+      }
     }
+    
+    // Also extract inline commands from validation criteria (e.g., "Running `npm run build` completes...")
+    validationCriteria.forEach(criterion => {
+      const inlineCommands = criterion.match(/`([^`]+)`/g);
+      if (inlineCommands) {
+        inlineCommands.forEach(cmd => {
+          const cleanCmd = cmd.replace(/`/g, '').trim();
+          // Only add if it looks like a runnable command
+          if (cleanCmd.startsWith('npm ') || cleanCmd.startsWith('npx ') || 
+              cleanCmd.startsWith('yarn ') || cleanCmd.startsWith('pnpm ')) {
+            if (!validationCommands.includes(cleanCmd)) {
+              validationCommands.push(cleanCmd);
+            }
+          }
+        });
+      }
+    });
+    
+    // Extract Context7 libraries to look up (from phase content)
+    const context7Libraries = extractContext7Libraries(phaseContent, tasks);
     
     // Determine model based on phase content
     const modelMatch = phaseContent.match(/\*\*Model\*\*:\s*(.+)/i);
@@ -305,7 +320,8 @@ function parsePhasePlan(planContent: string, maxAttempts: number): PhaseState[] 
       description,
       tasks.length > 0 ? tasks : [{ id: `task-${phaseNumber}-1`, description: 'Complete phase tasks', status: 'pending' }],
       validationCriteria.length > 0 ? validationCriteria : ['Phase objectives completed'],
-      context7Queries,
+      validationCommands,
+      context7Libraries,
       maxAttempts
     ));
     
@@ -324,10 +340,50 @@ function parsePhasePlan(planContent: string, maxAttempts: number): PhaseState[] 
       'Initial project setup and configuration',
       [{ id: 'task-1-1', description: 'Complete initial setup', status: 'pending' }],
       ['Project runs successfully'],
-      [],
+      ['npm run build'],
+      ['react', 'typescript'],
       maxAttempts
     ));
   }
   
   return phases;
+}
+
+/**
+ * Extract libraries/frameworks that should be looked up via Context7 for a phase
+ */
+function extractContext7Libraries(phaseContent: string, tasks: PhaseTask[]): string[] {
+  const libraries: string[] = [];
+  const contentLower = phaseContent.toLowerCase();
+  const taskText = tasks.map(t => t.description).join(' ').toLowerCase();
+  const allText = contentLower + ' ' + taskText;
+  
+  // Common libraries to detect
+  const libraryPatterns = [
+    { pattern: /\b(next\.?js|nextjs)\b/i, lib: 'next.js' },
+    { pattern: /\b(react)\b/i, lib: 'react' },
+    { pattern: /\b(vue)\b/i, lib: 'vue' },
+    { pattern: /\b(svelte)\b/i, lib: 'svelte' },
+    { pattern: /\b(tailwind|tailwindcss)\b/i, lib: 'tailwindcss' },
+    { pattern: /\b(shadcn)\b/i, lib: 'shadcn/ui' },
+    { pattern: /\b(typescript)\b/i, lib: 'typescript' },
+    { pattern: /\b(vite)\b/i, lib: 'vite' },
+    { pattern: /\b(vitest)\b/i, lib: 'vitest' },
+    { pattern: /\b(jest)\b/i, lib: 'jest' },
+    { pattern: /\b(prisma)\b/i, lib: 'prisma' },
+    { pattern: /\b(drizzle)\b/i, lib: 'drizzle' },
+    { pattern: /\b(trpc)\b/i, lib: 'trpc' },
+    { pattern: /\b(zod)\b/i, lib: 'zod' },
+    { pattern: /\b(framer.motion)\b/i, lib: 'framer-motion' },
+    { pattern: /\b(zustand)\b/i, lib: 'zustand' },
+    { pattern: /\b(redux)\b/i, lib: 'redux' },
+  ];
+  
+  for (const { pattern, lib } of libraryPatterns) {
+    if (pattern.test(allText) && !libraries.includes(lib)) {
+      libraries.push(lib);
+    }
+  }
+  
+  return libraries;
 }

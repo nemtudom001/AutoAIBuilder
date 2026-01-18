@@ -9,7 +9,7 @@ export interface GeneratedPrompt {
   modelName: string;
   stage: string;
   prompt: string;
-  context7Instructions?: string[];
+  context7Lookups?: string[]; // Libraries to look up via Context7 MCP
 }
 
 /**
@@ -17,16 +17,25 @@ export interface GeneratedPrompt {
  * Takes a rough idea and expands it into a comprehensive specification
  */
 export function generateSuperpromptEnhancement(idea: string, config: GlobalConfig): GeneratedPrompt {
+  // Extract explicit features from the idea for preservation
+  const explicitFeatures = extractExplicitFeatures(idea);
+  
   const prompt = `You are a senior software architect. Take this rough project idea and expand it into a comprehensive specification.
 
 ## Original Idea
 ${idea}
 
+## CRITICAL: Feature Preservation
+The following features were EXPLICITLY requested and MUST be included in the specification:
+${explicitFeatures.map(f => `- ${f}`).join('\n')}
+
+Do NOT omit, simplify, or defer any of these features. They are core requirements.
+
 ## Your Task
 1. **Clarify the core purpose** - What problem does this solve? Who is the target user?
-2. **Define features** - List explicit AND implicit features the user likely wants
+2. **Define features** - List ALL explicit features above, plus implicit features the user likely wants
 3. **Set technical boundaries** - Suggest appropriate tech stack, identify what's NOT needed
-4. **Scope boundaries** - What's included vs explicitly out of scope
+4. **Scope boundaries** - What's included vs explicitly out of scope (explicit features are NEVER out of scope)
 5. **Design direction** - Aesthetic, UX considerations
 
 ## Rules
@@ -34,6 +43,7 @@ ${idea}
 - Prefer established patterns over novel approaches
 - If something is ambiguous, make a reasonable assumption and state it
 - Output should be actionable, not theoretical
+- NEVER mark an explicitly requested feature as "out of scope" or "future enhancement"
 
 ## Tech Stack Preferences
 - UI Library: ${config.defaults.ui_library}
@@ -42,23 +52,105 @@ ${idea}
 ## Output Format
 Provide a structured markdown specification with clear sections for:
 - Project Overview
-- Core Features
+- Core Features (MUST include all explicit features listed above)
 - Technical Stack
-- Out of Scope
+- Out of Scope (only things NOT mentioned in original idea)
 - Design Direction
 
 Be specific and concrete. This will be used to generate development phases.`;
 
+  // Extract libraries to look up from the idea
+  const context7Lookups = extractLibrariesToLookup(idea, config);
+  
   return {
     model: 'planning',
     modelName: config.cursor.planning_model,
     stage: 'Superprompt Enhancement',
     prompt,
-    context7Instructions: [
-      'Look up the latest documentation for suggested frameworks',
-      'Verify current best practices for the tech stack',
-    ],
+    context7Lookups,
   };
+}
+
+/**
+ * Extract libraries/frameworks that should be looked up via Context7
+ */
+function extractLibrariesToLookup(idea: string, config: GlobalConfig): string[] {
+  const libraries: string[] = [];
+  const ideaLower = idea.toLowerCase();
+  
+  // Add configured UI library
+  if (config.defaults.ui_library && config.defaults.ui_library !== 'none') {
+    libraries.push(config.defaults.ui_library);
+  }
+  
+  // Common frameworks/libraries to detect
+  const libraryPatterns = [
+    { pattern: /\b(next\.?js|nextjs)\b/i, lib: 'next.js' },
+    { pattern: /\b(react)\b/i, lib: 'react' },
+    { pattern: /\b(vue)\b/i, lib: 'vue' },
+    { pattern: /\b(svelte)\b/i, lib: 'svelte' },
+    { pattern: /\b(angular)\b/i, lib: 'angular' },
+    { pattern: /\b(tailwind)\b/i, lib: 'tailwindcss' },
+    { pattern: /\b(typescript|ts)\b/i, lib: 'typescript' },
+    { pattern: /\b(express)\b/i, lib: 'express' },
+    { pattern: /\b(prisma)\b/i, lib: 'prisma' },
+    { pattern: /\b(supabase)\b/i, lib: 'supabase' },
+    { pattern: /\b(firebase)\b/i, lib: 'firebase' },
+    { pattern: /\b(mongodb|mongoose)\b/i, lib: 'mongodb' },
+    { pattern: /\b(postgres|postgresql)\b/i, lib: 'postgresql' },
+  ];
+  
+  for (const { pattern, lib } of libraryPatterns) {
+    if (pattern.test(idea) && !libraries.includes(lib)) {
+      libraries.push(lib);
+    }
+  }
+  
+  return libraries;
+}
+
+/**
+ * Extract explicit features from the user's idea
+ * Looks for specific mentions of functionality, sizes, modes, etc.
+ */
+function extractExplicitFeatures(idea: string): string[] {
+  const features: string[] = [];
+  const ideaLower = idea.toLowerCase();
+  
+  // Look for size/dimension patterns (e.g., "3x3", "5x5", "10x10")
+  const sizePattern = /(\d+)\s*[x×]\s*(\d+)/gi;
+  const sizeMatches = idea.match(sizePattern);
+  if (sizeMatches) {
+    features.push(`Board sizes: ${sizeMatches.join(', ')}`);
+  }
+  
+  // Look for explicit feature keywords
+  const featurePatterns = [
+    { pattern: /\b(ai|computer|bot)\s*(opponent|player|mode)?\b/i, feature: 'AI/Computer opponent' },
+    { pattern: /\b(multiplayer|multi-player|pvp|2\s*player)\b/i, feature: 'Multiplayer/PvP mode' },
+    { pattern: /\b(score|scoring|points|leaderboard)\b/i, feature: 'Score tracking' },
+    { pattern: /\b(dark\s*mode|light\s*mode|theme)\b/i, feature: 'Theme/Dark mode support' },
+    { pattern: /\b(mobile|responsive)\b/i, feature: 'Mobile/Responsive design' },
+    { pattern: /\b(save|persist|storage)\b/i, feature: 'Save/Persistence' },
+    { pattern: /\b(undo|redo)\b/i, feature: 'Undo/Redo functionality' },
+    { pattern: /\b(timer|timed|clock)\b/i, feature: 'Timer/Timed mode' },
+    { pattern: /\b(sound|audio|music)\b/i, feature: 'Sound/Audio' },
+    { pattern: /\b(animation|animated)\b/i, feature: 'Animations' },
+    { pattern: /\b(modern|beautiful|sleek|polished)\b/i, feature: 'Modern/Polished UI' },
+  ];
+  
+  for (const { pattern, feature } of featurePatterns) {
+    if (pattern.test(idea)) {
+      features.push(feature);
+    }
+  }
+  
+  // If no specific features detected, add the whole idea as a feature
+  if (features.length === 0) {
+    features.push(idea.trim());
+  }
+  
+  return features;
 }
 
 /**
@@ -71,20 +163,32 @@ export function generatePhaseStructuring(enhancedSpec: string, config: GlobalCon
 ## Project Specification
 ${enhancedSpec}
 
+## CRITICAL: Feature Coverage
+Every feature listed in "Core Features" above MUST be covered by at least one phase.
+Do NOT defer features to "future work" or "nice to have" - they are all required.
+
 ## Your Task
 Create a phased development plan where:
 1. Each phase is independently executable and testable
 2. Phases build on each other logically
-3. Each phase has clear validation criteria
-4. Context7 documentation queries are specified for each phase
+3. Each phase has clear, VERIFIABLE validation criteria
+4. ALL core features from the spec are assigned to specific phases
 
 ## Phase Structure Template
 For each phase, provide:
 - **Phase Number & Name**
 - **Description**: What this phase accomplishes
 - **Tasks**: Specific implementation tasks (3-7 per phase)
-- **Validation Criteria**: How to verify this phase is complete
-- **Context7 Queries**: Documentation to look up before starting
+- **Validation Criteria**: TESTABLE criteria to verify completion (commands to run, UI elements to check, etc.)
+- **Validation Commands**: Shell commands that should pass (e.g., \`npm run build\`, \`npm test\`, etc.)
+
+## Validation Criteria Rules
+Validation criteria must be VERIFIABLE, not subjective:
+- ✅ Good: "Running \`npm run build\` completes without errors"
+- ✅ Good: "The 5x5 board option is visible and selectable in the UI"
+- ✅ Good: "Clicking a cell places the current player's mark"
+- ❌ Bad: "Code is clean and well-organized"
+- ❌ Bad: "UI looks good"
 
 ## Rules
 - Phase 1 should always be project foundation/setup
@@ -92,6 +196,7 @@ For each phase, provide:
 - Earlier phases should not depend on later phases
 - Include a final phase for polish and testing
 - Maximum 10 phases for any project
+- EVERY feature in the spec must appear in at least one phase's tasks
 
 ## Output Format
 Provide the phase plan in this exact markdown structure:
@@ -108,29 +213,30 @@ Provide the phase plan in this exact markdown structure:
 ...
 
 ### Validation Criteria
-- [ ] [Criterion 1]
-- [ ] [Criterion 2]
+- [ ] [Testable criterion 1]
+- [ ] [Testable criterion 2]
 ...
 
-### Context7 Queries
-- [library/framework]: [specific topic to look up]
-...
+### Validation Commands
+\`\`\`bash
+npm run build
+npm run lint
+# any other commands that should pass
+\`\`\`
 
 (Repeat for each phase)
 
 ## Summary
 - Total Phases: [N]
-- Estimated Total Time: [X hours]`;
+- Estimated Total Time: [X hours]
+- Features Covered: [List all features from spec and which phase covers them]`;
 
   return {
     model: 'planning',
     modelName: config.cursor.planning_model,
     stage: 'Phase Structuring',
     prompt,
-    context7Instructions: [
-      'Verify framework setup best practices',
-      'Check for any recent breaking changes in dependencies',
-    ],
+    context7Lookups: ['react', 'typescript'], // Common for most web projects
   };
 }
 
@@ -187,16 +293,8 @@ ${phase.validation_criteria.map(c => `- [ ] ${c}`).join('\n')}
 
 `;
 
-  // Context7 - fetch FRESH docs for this phase (not cached from previous)
-  if (phase.context7_queries && phase.context7_queries.length > 0) {
-    prompt += `## Documentation (Context7)
-**Before coding**, use @context7 to fetch current docs for:
-${phase.context7_queries.map(q => `- ${q}`).join('\n')}
-
-This ensures you have up-to-date API references.
-
-`;
-  }
+  // Context7 libraries to look up for this phase
+  const context7Libraries = phase.context7_libraries || [];
 
   // Minimal design constraints
   prompt += `## Constraints
@@ -243,7 +341,7 @@ ${summarizeForContext(failureReport)}
     modelName: config.cursor.execution_model,
     stage: `Phase ${phase.phase_number} Execution`,
     prompt,
-    context7Instructions: phase.context7_queries,
+    context7Lookups: context7Libraries,
   };
 }
 
@@ -338,6 +436,7 @@ ${phase.validation_criteria.map(c => `- [ ] ${c}`).join('\n')}
 
 /**
  * Build the full prompt with cursor instructions
+ * Includes Context7 MCP instructions when libraries need to be looked up
  */
 export function buildCursorPrompt(generated: GeneratedPrompt): string {
   let fullPrompt = '';
@@ -350,10 +449,13 @@ Stage: ${generated.stage}
 
 `;
   
-  // Add Context7 instructions if present
-  if (generated.context7Instructions && generated.context7Instructions.length > 0) {
-    fullPrompt += `**Before starting, use @context7 to look up:**
-${generated.context7Instructions.map(q => `- ${q}`).join('\n')}
+  // Add Context7 lookup instructions if there are libraries to look up
+  if (generated.context7Lookups && generated.context7Lookups.length > 0) {
+    fullPrompt += `## Documentation Lookup (Context7)
+**Before proceeding, use @context7 to look up current documentation for:**
+${generated.context7Lookups.map(lib => `- ${lib}: latest setup guide and best practices`).join('\n')}
+
+This ensures you have up-to-date API references and avoid deprecated patterns.
 
 ---
 

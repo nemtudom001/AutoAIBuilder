@@ -19,9 +19,10 @@ export interface PhaseState {
   max_attempts: number;
   tasks: PhaseTask[];
   validation_criteria: string[];
+  validation_commands?: string[]; // Shell commands to verify completion
+  context7_libraries?: string[]; // Libraries to look up via Context7 MCP
   started_at?: string;
   completed_at?: string;
-  context7_queries?: string[];
 }
 
 export interface AttemptState {
@@ -307,7 +308,8 @@ export function createPhaseState(
   description: string,
   tasks: PhaseTask[],
   validationCriteria: string[],
-  context7Queries: string[],
+  validationCommands: string[],
+  context7Libraries: string[] = [],
   maxAttempts: number = 3
 ): PhaseState {
   return {
@@ -320,6 +322,7 @@ export function createPhaseState(
     max_attempts: maxAttempts,
     tasks,
     validation_criteria: validationCriteria,
-    context7_queries: context7Queries,
+    validation_commands: validationCommands,
+    context7_libraries: context7Libraries,
   };
 }

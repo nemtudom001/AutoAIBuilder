@@ -107,6 +107,12 @@ async function interactivePlanning(state: any): Promise<void> {
       },
       {
         type: 'input',
+        name: 'validationCommands',
+        message: 'Validation commands (comma-separated, e.g., npm run build, npm test):',
+        default: 'npm run build',
+      },
+      {
+        type: 'input',
         name: 'context7',
         message: 'Context7 docs to look up (comma-separated):',
         default: '',
@@ -129,8 +135,14 @@ async function interactivePlanning(state: any): Promise<void> {
       .filter((line: string) => line.trim())
       .map((line: string) => line.replace(/^-\s*/, '').trim());
     
-    // Parse Context7 queries
-    const context7 = phaseAnswers.context7
+    // Parse validation commands
+    const validationCommands = phaseAnswers.validationCommands
+      .split(',')
+      .map((cmd: string) => cmd.trim())
+      .filter(Boolean);
+    
+    // Parse Context7 libraries
+    const context7Libraries = phaseAnswers.context7
       .split(',')
       .map((q: string) => q.trim())
       .filter(Boolean);
@@ -141,7 +153,8 @@ async function interactivePlanning(state: any): Promise<void> {
       phaseAnswers.description,
       tasks,
       validation,
-      context7,
+      validationCommands,
+      context7Libraries,
       3
     ));
     
@@ -221,10 +234,19 @@ function generatePlanMarkdown(phases: PhaseState[]): string {
     });
     content += '\n';
     
-    if (phase.context7_queries && phase.context7_queries.length > 0) {
-      content += '### Context7 Queries\n';
-      phase.context7_queries.forEach(query => {
-        content += `- ${query}\n`;
+    if (phase.validation_commands && phase.validation_commands.length > 0) {
+      content += '### Validation Commands\n';
+      content += '```bash\n';
+      phase.validation_commands.forEach(cmd => {
+        content += `${cmd}\n`;
+      });
+      content += '```\n\n';
+    }
+    
+    if (phase.context7_libraries && phase.context7_libraries.length > 0) {
+      content += '### Context7 Documentation\n';
+      phase.context7_libraries.forEach(lib => {
+        content += `- ${lib}\n`;
       });
       content += '\n';
     }

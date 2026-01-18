@@ -28,6 +28,10 @@ import {
   isCursorCliInstalled,
   isCursorCliAuthenticated,
 } from '../../core/cursor-cli.js';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 
 interface RunOptions {
   phase?: string;
@@ -143,14 +147,6 @@ export async function runCommand(options: RunOptions): Promise<void> {
   });
   console.log();
   
-  if (prompt.context7Instructions && prompt.context7Instructions.length > 0) {
-    console.log(chalk.white('Context7 Docs to Look Up:'));
-    prompt.context7Instructions.forEach(q => {
-      console.log(chalk.dim('  • ') + chalk.cyan(q));
-    });
-    console.log();
-  }
-  
   // Dry run - just show the prompt
   if (options.dryRun) {
     console.log(chalk.yellow('\n━━━ DRY RUN - Prompt Preview ━━━\n'));
@@ -215,9 +211,56 @@ async function handlePhaseCompleted(
   const spinner = ora('Completing phase...').start();
   
   try {
+    // Load phase to get validation commands
+    const phase = await loadPhaseState(phaseNumber);
+    
     // Get modified files from git (more reliable than parsing output)
     const gitStatus = await getGitStatus();
-    const filesModified = [...gitStatus.modifiedFiles, ...gitStatus.untrackedFiles];
+    
+    // Filter to only files within this project directory
+    const allFiles = [...gitStatus.modifiedFiles, ...gitStatus.untrackedFiles];
+    const filesModified = allFiles.filter(f => {
+      // Exclude files from parent directories (e.g., if project is nested in another repo)
+      // Also exclude .ai-phases internal files from display
+      return !f.startsWith('..') && 
+             !f.includes('/.ai-phases/') &&
+             !f.startsWith('.ai-phases/');
+    });
+    
+    // Run validation commands if any exist
+    if (phase?.validation_commands && phase.validation_commands.length > 0) {
+      spinner.text = 'Running validation checks...';
+      const validationResult = await runValidationCommands(phase.validation_commands);
+      
+      if (!validationResult.success) {
+        spinner.fail('Validation failed');
+        console.log(chalk.red('\n━━━ Validation Failed ━━━\n'));
+        console.log(chalk.dim('Failed commands:'));
+        validationResult.failures.forEach(f => {
+          console.log(chalk.red(`  ✗ ${f.command}`));
+          if (f.error) {
+            console.log(chalk.dim(`    ${f.error.split('\n')[0]}`));
+          }
+        });
+        
+        // Mark as failed due to validation
+        await markAttemptFailed(
+          phaseNumber,
+          attemptNumber,
+          `Validation commands failed:\n${validationResult.failures.map(f => `- ${f.command}: ${f.error}`).join('\n')}`,
+          'Fix the validation errors and retry'
+        );
+        
+        const remainingAttempts = (phase?.max_attempts || 3) - attemptNumber;
+        if (remainingAttempts > 0) {
+          console.log(chalk.yellow(`\n⚠️  ${remainingAttempts} attempt(s) remaining. Retry with:`));
+          console.log(chalk.cyan(`  ai-phases run --phase ${phaseNumber}\n`));
+        }
+        return;
+      }
+      
+      spinner.text = 'Validation passed, completing phase...';
+    }
     
     // Mark attempt completed
     await markAttemptCompleted(phaseNumber, attemptNumber, filesModified);
@@ -403,4 +446,41 @@ Keep it concise (under 500 words). Focus on what the next phase needs to know.`;
     // Handover generation is optional, don't fail the phase
     console.log(chalk.dim('Handover generation skipped (optional)'));
   }
+}
+
+interface ValidationResult {
+  success: boolean;
+  failures: Array<{ command: string; error?: string }>;
+  passed: string[];
+}
+
+/**
+ * Run validation commands to verify phase completion
+ */
+async function runValidationCommands(commands: string[]): Promise<ValidationResult> {
+  const result: ValidationResult = {
+    success: true,
+    failures: [],
+    passed: [],
+  };
+  
+  for (const command of commands) {
+    try {
+      // Run command with a reasonable timeout (60 seconds)
+      await execAsync(command, {
+        cwd: process.cwd(),
+        timeout: 60000,
+        env: { ...process.env, CI: 'true' }, // Some tools behave better in CI mode
+      });
+      result.passed.push(command);
+    } catch (error: any) {
+      result.success = false;
+      result.failures.push({
+        command,
+        error: error.stderr || error.stdout || error.message || 'Unknown error',
+      });
+    }
+  }
+  
+  return result;
 }

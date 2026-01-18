@@ -96,6 +96,8 @@ export async function runCursorAgent(options: CursorCliOptions): Promise<CursorC
       '-f', 
       '--model', model,
       '--output-format', 'text',
+      '--workspace', workingDir, // Explicitly set workspace to current project
+      '--approve-mcps', // Enable MCP servers (including Context7) for documentation lookup
       '--',
       options.prompt,
     ];
