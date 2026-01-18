@@ -15,11 +15,13 @@ import {
 } from '../../core/state-manager.js';
 import {
   generatePhaseExecutionPrompt,
+  generateErrorFixPrompt,
   buildCursorPrompt,
   savePromptToFile,
 } from '../../core/prompt-builder.js';
 import {
   commitPhaseCompletion,
+  commitPartialProgress,
   createPhaseCheckpoint,
   getGitStatus,
   pushToRemote,
@@ -43,10 +45,15 @@ import { promisify } from 'util';
 
 const execAsync = promisify(exec);
 
+// Maximum number of AI fix attempts per validation failure
+const MAX_AI_FIX_ATTEMPTS = 2;
+
 interface RunOptions {
   phase?: string;
   dryRun?: boolean;
   auto?: boolean;
+  isRetry?: boolean; // Internal flag for retry attempts
+  errorContext?: string; // Error context from previous attempt
 }
 
 export async function runCommand(options: RunOptions): Promise<void> {
@@ -147,8 +154,14 @@ export async function runCommand(options: RunOptions): Promise<void> {
     }
   }
   
-  // Generate prompt
-  const prompt = await generatePhaseExecutionPrompt(phase, previousHandover);
+  // Generate prompt with error context if this is a retry
+  const errorContext = options.isRetry ? options.errorContext : undefined;
+  const prompt = await generatePhaseExecutionPrompt(phase, previousHandover, errorContext);
+  
+  // Log retry context if applicable
+  if (options.isRetry) {
+    console.log(chalk.yellow('\n🔄 RETRY MODE: Starting fresh AI context with error information from previous attempt.\n'));
+  }
   
   // Display phase info
   console.log(
@@ -225,23 +238,86 @@ export async function runCommand(options: RunOptions): Promise<void> {
   
   if (result.success) {
     spinner.succeed(`Phase ${phaseNumber} completed in ${elapsed}s`);
-    await handlePhaseCompleted(phaseNumber, attempt.attempt_number, globalConfig, result);
+    const completionResult = await handlePhaseCompleted(phaseNumber, attempt.attempt_number, globalConfig, result);
     
-    // Auto-continue to next phase if enabled
-    if (globalConfig.defaults.auto_run_phases) {
-      const updatedState = await loadProjectState();
-      if (updatedState && updatedState.status !== 'completed') {
-        const nextPhase = updatedState.phases.find(p => p.status === 'pending');
-        if (nextPhase) {
-          console.log(chalk.cyan(`\n▶ Auto-continuing to Phase ${nextPhase.phase_number}: ${nextPhase.name}\n`));
-          await runCommand({ phase: String(nextPhase.phase_number), auto: isAutoMode });
+    if (completionResult.success) {
+      // Auto-continue to next phase if enabled
+      if (globalConfig.defaults.auto_run_phases) {
+        const updatedState = await loadProjectState();
+        if (updatedState && updatedState.status !== 'completed') {
+          const nextPhase = updatedState.phases.find(p => p.status === 'pending');
+          if (nextPhase) {
+            console.log(chalk.cyan('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
+            console.log(chalk.cyan.bold('  ▶ STARTING NEW PHASE WITH FRESH CONTEXT'));
+            console.log(chalk.cyan('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
+            console.log(chalk.dim('\n  Previous phase context cleared. Using handover notes only.\n'));
+            console.log(chalk.cyan(`  → Phase ${nextPhase.phase_number}: ${nextPhase.name}\n`));
+            
+            // Start next phase with fresh context (new cursor-agent invocation)
+            // The handover from the previous phase is loaded in generatePhaseExecutionPrompt
+            await runCommand({ phase: String(nextPhase.phase_number), auto: isAutoMode });
+          }
         }
+      }
+    } else if (completionResult.needsRetry && completionResult.errorContext) {
+      // Validation failed - attempt AI-driven fix with fresh context
+      const remainingAttempts = phase.max_attempts - attempt.attempt_number;
+      if (remainingAttempts > 0 && isAutoMode) {
+        console.log(chalk.yellow(`\n🔧 Retrying with fresh AI context (${remainingAttempts} attempts remaining)...\n`));
+        console.log(chalk.dim('  Previous context cleared. Error information will be passed to new session.\n'));
+        
+        // Note: Partial progress already committed in handlePhaseCompleted
+        // Retry with error context passed to new AI context window
+        await runCommand({ 
+          phase: String(phaseNumber), 
+          auto: true, 
+          isRetry: true,
+          errorContext: completionResult.errorContext 
+        });
+      } else if (remainingAttempts > 0) {
+        console.log(chalk.yellow(`\n⚠️  ${remainingAttempts} attempt(s) remaining. Retry with:`));
+        console.log(chalk.cyan(`  ai-phases run --phase ${phaseNumber}\n`));
+      } else {
+        console.log(chalk.red(`\n⛔ Phase ${phaseNumber} BLOCKED - all ${phase.max_attempts} attempts exhausted.\n`));
+        console.log(chalk.dim('Manual intervention required. Review the failure reports in:'));
+        console.log(chalk.cyan(`  ${path.join(getProjectPhasesDir(), 'phases', `phase-${phaseNumber}`)}\n`));
       }
     }
   } else {
     spinner.fail(`Phase ${phaseNumber} failed after ${elapsed}s`);
+    
+    // Even on failure, commit any partial progress made
+    const gitStatus = await getGitStatus();
+    if (gitStatus.hasChanges) {
+      console.log(chalk.dim('Committing partial progress before marking failed...'));
+      await commitPartialProgress(phaseNumber, attempt.attempt_number, 'failed-execution');
+    }
+    
     await handlePhaseFailed(phaseNumber, attempt.attempt_number, phase.max_attempts, result.error || 'Unknown error');
+    
+    // If in auto mode and we have retries left, try again with fresh context
+    // Reload phase to check if it was blocked by handlePhaseFailed
+    const updatedPhase = await loadPhaseState(phaseNumber);
+    if (updatedPhase && updatedPhase.status !== 'blocked') {
+      const remainingAttempts = phase.max_attempts - attempt.attempt_number;
+      if (remainingAttempts > 0 && isAutoMode) {
+        console.log(chalk.yellow(`\n🔧 Auto-mode: Retrying with fresh AI context...\n`));
+        console.log(chalk.dim('  Previous context cleared. Error information will inform new session.\n'));
+        await runCommand({ 
+          phase: String(phaseNumber), 
+          auto: true, 
+          isRetry: true,
+          errorContext: result.error || 'Unknown execution error' 
+        });
+      }
+    }
   }
+}
+
+interface PhaseCompletionResult {
+  success: boolean;
+  needsRetry?: boolean;
+  errorContext?: string;
 }
 
 async function handlePhaseCompleted(
@@ -249,7 +325,7 @@ async function handlePhaseCompleted(
   attemptNumber: number,
   globalConfig: any,
   result: { output: string; filesModified?: string[] }
-): Promise<void> {
+): Promise<PhaseCompletionResult> {
   const spinner = ora('Completing phase...').start();
   
   try {
@@ -273,60 +349,106 @@ async function handlePhaseCompleted(
     if (phase?.validation_commands && phase.validation_commands.length > 0) {
       spinner.text = 'Running validation checks...';
       let validationResult = await runValidationCommands(phase.validation_commands);
+      let aiFixAttempts = 0;
       
-      if (!validationResult.success) {
-        spinner.warn('Validation failed - attempting auto-fix...');
+      // Keep trying to fix until validation passes or we run out of attempts
+      while (!validationResult.success && aiFixAttempts < MAX_AI_FIX_ATTEMPTS) {
+        aiFixAttempts++;
+        spinner.warn(`Validation failed - attempting fix (${aiFixAttempts}/${MAX_AI_FIX_ATTEMPTS})...`);
         
-        // Attempt auto-fix for failed validations
+        // Attempt basic auto-fix first (npm installs, etc.)
         const errorOutput = validationResult.failures.map(f => f.error || '').join('\n');
         const autoFixResult = await attemptAutoFix(errorOutput);
         
         if (autoFixResult.fixed) {
           displayAutoFixResults(autoFixResult);
-          
-          // Re-run validation after auto-fixes
           console.log(chalk.cyan('\n  Re-running validation after auto-fixes...\n'));
           validationResult = await runValidationCommands(phase.validation_commands);
+          
+          if (validationResult.success) {
+            console.log(chalk.green('✓ Validation passed after auto-fixes!'));
+            break;
+          }
         }
         
+        // If basic auto-fix didn't work, try AI-driven fix
         if (!validationResult.success) {
-          spinner.fail('Validation failed');
-          console.log(chalk.red('\n━━━ Validation Failed ━━━\n'));
-          console.log(chalk.dim('Failed commands:'));
-          validationResult.failures.forEach(f => {
-            console.log(chalk.red(`  ✗ ${f.command}`));
-            if (f.error) {
-              console.log(chalk.dim(`    ${f.error.split('\n')[0]}`));
-            }
-          });
+          spinner.text = 'Basic fix failed - requesting AI-driven fix...';
           
-          // Show auto-fix suggestions if not already shown
-          if (!autoFixResult.fixed && autoFixResult.suggestions.length > 0) {
-            displayAutoFixResults(autoFixResult);
-          }
+          // Build detailed error context for AI
+          const errorDetails = validationResult.failures.map(f => {
+            const errorLines = (f.error || '').split('\n').slice(0, 20).join('\n');
+            return `Command: ${f.command}\nError:\n${errorLines}`;
+          }).join('\n\n');
           
-          // Mark as failed due to validation with detailed error context
-          const errorDetails = validationResult.failures.map(f => `- ${f.command}: ${f.error}`).join('\n');
-          const suggestions = autoFixResult.suggestions.length > 0 
-            ? `\n\nSuggested fixes:\n${autoFixResult.suggestions.map(s => `- ${s}`).join('\n')}`
-            : '';
-          
-          await markAttemptFailed(
-            phaseNumber,
-            attemptNumber,
-            `Validation commands failed:\n${errorDetails}`,
-            `Review the error output above and fix the specific issues before retrying.${suggestions}`
+          // Generate AI fix prompt
+          const fixPrompt = await generateErrorFixPrompt(
+            phase,
+            errorDetails,
+            autoFixResult.suggestions,
+            filesModified
           );
           
-          const remainingAttempts = (phase?.max_attempts || 3) - attemptNumber;
-          if (remainingAttempts > 0) {
-            console.log(chalk.yellow(`\n⚠️  ${remainingAttempts} attempt(s) remaining. Retry with:`));
-            console.log(chalk.cyan(`  ai-phases run --phase ${phaseNumber}\n`));
+          // Run AI fix in fresh context
+          console.log(chalk.yellow('\n━━━ AI Error Fix Attempt ━━━\n'));
+          console.log(chalk.dim('Asking AI to analyze and fix the errors...\n'));
+          
+          const fixResult = await runCursorAgent({
+            prompt: buildCursorPrompt(fixPrompt),
+            model: fixPrompt.modelName,
+            workingDir: process.cwd(),
+            timeout: 300000, // 5 minutes for fix
+            onOutput: (chunk) => {
+              const lines = chunk.split('\n').filter(l => l.trim());
+              if (lines.length > 0) {
+                const lastLine = lines[lines.length - 1].substring(0, 50);
+                spinner.text = `AI fixing: ${chalk.dim(lastLine)}...`;
+              }
+            },
+          });
+          
+          if (fixResult.success) {
+            console.log(chalk.green('✓ AI fix completed, re-validating...\n'));
+            validationResult = await runValidationCommands(phase.validation_commands);
+          } else {
+            console.log(chalk.red(`✗ AI fix failed: ${fixResult.error || 'Unknown error'}`));
           }
-          return;
         }
+      }
+      
+      // Final check - if still failing after all attempts
+      if (!validationResult.success) {
+        spinner.fail('Validation failed after all fix attempts');
+        console.log(chalk.red('\n━━━ Validation Failed ━━━\n'));
+        console.log(chalk.dim('Failed commands:'));
+        validationResult.failures.forEach(f => {
+          console.log(chalk.red(`  ✗ ${f.command}`));
+          if (f.error) {
+            console.log(chalk.dim(`    ${f.error.split('\n')[0]}`));
+          }
+        });
         
-        console.log(chalk.green('✓ Validation passed after auto-fixes!'));
+        // Build error context for potential retry at phase level
+        const errorDetails = validationResult.failures.map(f => 
+          `- ${f.command}:\n${(f.error || 'Unknown error').split('\n').slice(0, 10).join('\n')}`
+        ).join('\n\n');
+        
+        // Commit partial progress even on failure
+        await commitPartialProgress(phaseNumber, attemptNumber, 'validation-failed');
+        
+        // Mark as failed with detailed error context
+        await markAttemptFailed(
+          phaseNumber,
+          attemptNumber,
+          `Validation commands failed after ${aiFixAttempts} fix attempts:\n${errorDetails}`,
+          `AI could not automatically fix these errors. Manual intervention may be required.`
+        );
+        
+        return {
+          success: false,
+          needsRetry: true,
+          errorContext: errorDetails,
+        };
       }
       
       spinner.text = 'Validation passed, completing phase...';
@@ -401,9 +523,16 @@ async function handlePhaseCompleted(
       console.log(chalk.green.bold('\n🎉 All phases complete! Project finished.\n'));
     }
     
+    return { success: true };
+    
   } catch (error) {
     spinner.fail('Failed to complete phase');
     console.error(chalk.red(error instanceof Error ? error.message : 'Unknown error'));
+    return { 
+      success: false, 
+      needsRetry: true, 
+      errorContext: error instanceof Error ? error.message : 'Unknown error' 
+    };
   }
 }
 

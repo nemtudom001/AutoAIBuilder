@@ -225,6 +225,52 @@ export async function commitPhaseCompletion(
 }
 
 /**
+ * Commit partial progress (even when validation fails)
+ * This preserves work done by the AI so it's not lost
+ */
+export async function commitPartialProgress(
+  phaseNumber: number,
+  attemptNumber: number,
+  status: 'partial-with-errors' | 'validation-failed' | 'failed-execution'
+): Promise<string | null> {
+  const gitStatus = await getGitStatus();
+  
+  if (!gitStatus.isRepo) {
+    console.log(chalk.dim('Not a git repository, skipping partial commit'));
+    return null;
+  }
+  
+  if (!gitStatus.hasChanges) {
+    console.log(chalk.dim('No changes to commit'));
+    return gitStatus.currentCommit;
+  }
+  
+  try {
+    // Ensure .gitignore exists before staging
+    await ensureGitignore();
+    
+    // Stage all changes
+    await execAsync('git add -A');
+    
+    // Create commit with status indicator
+    const statusEmoji = status === 'validation-failed' ? '⚠️' : 
+                       status === 'partial-with-errors' ? '🔧' : '❌';
+    const message = `[ai-phases] ${statusEmoji} Phase ${phaseNumber} attempt ${attemptNumber} (${status})`;
+    await execAsync(`git commit -m "${message}"`);
+    
+    // Get new commit hash
+    const { stdout } = await execAsync('git rev-parse HEAD');
+    const commitHash = stdout.trim();
+    
+    console.log(chalk.yellow(`✓ Partial progress committed: ${commitHash.substring(0, 7)}`));
+    return commitHash;
+  } catch (error) {
+    console.log(chalk.dim('Could not commit partial progress (may be no changes)'));
+    return null;
+  }
+}
+
+/**
  * Create a checkpoint tag for a phase
  */
 export async function createPhaseCheckpoint(

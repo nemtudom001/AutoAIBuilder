@@ -323,10 +323,12 @@ npm run lint
  * - Only loads: phase info + previous handover + Context7 docs
  * - Full project spec and research findings are NOT included
  * - This keeps prompts efficient and focused
+ * - Each phase runs in a FRESH cursor-agent session for context isolation
  */
 export async function generatePhaseExecutionPrompt(
   phase: PhaseState,
-  previousHandover?: string
+  previousHandover?: string,
+  errorContext?: string // Optional error context from failed attempt
 ): Promise<GeneratedPrompt> {
   const config = await loadGlobalConfig();
   if (!config) throw new Error('No global config found');
@@ -336,10 +338,26 @@ export async function generatePhaseExecutionPrompt(
   
   let prompt = `# Phase ${phase.phase_number}: ${phase.name}
 
+## ⚡ FRESH CONTEXT - NEW SESSION
+This is a new AI session with fresh context. Previous conversation history is NOT available.
+All context you need is provided in this prompt.
+
 ## Phase Context
 ${phase.description}
 
 `;
+
+  // Add error context if this is a retry
+  if (errorContext) {
+    prompt += `## ⚠️ RETRY CONTEXT - Previous Attempt Failed
+The previous attempt at this phase failed with these errors:
+
+${errorContext}
+
+**You MUST fix these specific issues in this attempt.**
+
+`;
+  }
 
   // Add previous handover ONLY (summarized context from last phase)
   // This is the ONLY carry-over context between phases
@@ -402,12 +420,21 @@ ${getUILibraryRequirements(config.defaults.ui_library)}
 
   // Rules - keep focused
   prompt += `## Rules
+- **EXPLORE FIRST**: Since this is a fresh context, READ relevant files before making changes
 - Only modify files relevant to THIS phase
 - Don't refactor unrelated code
 - Complete all validation criteria before finishing
 - Note any blockers in handover
 
+## IMPORTANT: Fresh Context Workflow
+Since you're starting with a fresh context window:
+1. **Read key files first** - Check what code already exists before writing
+2. **Don't assume** - The handover summary is brief; inspect actual code for details
+3. **Build on existing work** - Previous phases created code you should use/extend
+4. **Verify imports** - Check that imports match actual file paths in the project
+
 `;
+
 
   // If retry, add failure context with specific guidance
   if (phase.current_attempt > 0) {
@@ -493,6 +520,93 @@ function summarizeForContext(content: string, maxLines: number = 50): string {
   }
   
   return summarized.join('\n');
+}
+
+/**
+ * Generate prompt for AI to fix specific validation errors
+ * 
+ * This is used when basic auto-fix fails and we need the AI to
+ * analyze and fix the actual code errors.
+ */
+export async function generateErrorFixPrompt(
+  phase: PhaseState,
+  errorDetails: string,
+  suggestions: string[],
+  filesModified: string[]
+): Promise<GeneratedPrompt> {
+  const config = await loadGlobalConfig();
+  if (!config) throw new Error('No global config found');
+
+  let prompt = `# 🔧 ERROR FIX REQUIRED - Phase ${phase.phase_number}: ${phase.name}
+
+## CRITICAL: You MUST Fix These Validation Errors
+
+The phase execution completed but validation failed. You need to fix the specific errors below.
+
+## Validation Errors
+
+${errorDetails}
+
+`;
+
+  if (suggestions.length > 0) {
+    prompt += `## Suggested Fixes (from error analysis)
+${suggestions.map(s => `- ${s}`).join('\n')}
+
+`;
+  }
+
+  prompt += `## Files That Were Modified
+${filesModified.map(f => `- ${f}`).join('\n') || 'None recorded'}
+
+## Your Task
+
+1. **Read the error messages carefully** - They tell you exactly what's wrong
+2. **Identify the root cause** - Don't just patch symptoms
+3. **Fix the specific issues** - Make targeted changes only
+4. **Verify your fix** - Ensure it addresses the exact error mentioned
+
+## Common Fix Patterns
+
+### TypeScript Type Errors
+- Check that types match what the library expects
+- Use \`as const\` for literal types when needed
+- For Framer Motion: use \`ease: [0.4, 0, 0.2, 1]\` instead of \`ease: "easeOut"\`
+
+### Import/Module Errors
+- Verify the package is installed: \`npm install <package>\`
+- Check the import path is correct
+- For shadcn: \`npx shadcn@latest add <component>\`
+
+### Build Errors
+- Fix ALL errors, not just the first one (they may cascade)
+- Check for syntax errors (missing brackets, semicolons)
+- Ensure JSX is properly closed
+
+### Tailwind CSS Errors
+- Don't use \`@apply\` with CSS variable utilities
+- Use inline Tailwind classes instead
+
+## Rules
+
+- **ONLY fix the errors** - Don't refactor or change unrelated code
+- **Be precise** - Make the minimum changes needed
+- **Test your changes** - The validation will run again after you fix
+
+## IMPORTANT
+
+After fixing, the validation commands will be re-run:
+${phase.validation_commands?.map(c => `- \`${c}\``).join('\n') || 'None specified'}
+
+Make sure your fixes will make these commands pass.
+`;
+
+  return {
+    model: 'execution',
+    modelName: config.cursor.execution_model,
+    stage: `Phase ${phase.phase_number} Error Fix`,
+    prompt,
+  };
 }
 
 /**
