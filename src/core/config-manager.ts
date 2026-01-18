@@ -276,8 +276,7 @@ export async function runSetupWizard(): Promise<GlobalConfig> {
           console.log(chalk.white('  Please install GitHub CLI manually:'));
           console.log(chalk.cyan('  1. Download from: https://cli.github.com/'));
           console.log(chalk.cyan('  2. Run the installer'));
-          console.log(chalk.cyan('  3. Restart your terminal'));
-          console.log(chalk.cyan('  4. Run: ai-phases config --setup\n'));
+          console.log(chalk.cyan('  3. Come back here and press Enter\n'));
           
           const manualInstallAnswer = await inquirer.prompt([
             {
@@ -285,7 +284,7 @@ export async function runSetupWizard(): Promise<GlobalConfig> {
               name: 'action',
               message: 'How would you like to proceed?',
               choices: [
-                { name: 'Open download page in browser', value: 'open' },
+                { name: 'Open download page in browser (I\'ll install and come back)', value: 'open' },
                 { name: 'Skip GitHub integration (set up later)', value: 'skip' },
                 { name: 'Cancel setup', value: 'cancel' },
               ],
@@ -301,10 +300,71 @@ export async function runSetupWizard(): Promise<GlobalConfig> {
             const { exec } = await import('child_process');
             exec('start https://cli.github.com/');
             console.log(chalk.cyan('\n  Browser opened to https://cli.github.com/'));
-            console.log(chalk.yellow('  After installing, run: ai-phases config --setup\n'));
+            console.log(chalk.yellow('\n  📦 Download and install the GitHub CLI, then come back here.\n'));
+            
+            // Wait for user to install
+            await inquirer.prompt([
+              {
+                type: 'input',
+                name: 'continue',
+                message: 'Press Enter after you\'ve installed GitHub CLI...',
+              },
+            ]);
+            
+            // Re-check if gh is now installed
+            const checkSpinner = ora('Checking for GitHub CLI...').start();
+            ghStatus = await checkGitHubCliStatus();
+            
+            if (ghStatus.installed) {
+              checkSpinner.succeed('GitHub CLI detected!');
+              console.log(chalk.green('  ✓ GitHub CLI (gh) installed\n'));
+              
+              // Now authenticate
+              if (!ghStatus.authenticated) {
+                console.log(chalk.yellow('  ✗ Not authenticated with GitHub\n'));
+                console.log(chalk.white('  You need to authenticate to enable auto repo creation.'));
+                console.log(chalk.dim('  This will open your browser to sign in.\n'));
+                
+                const ghLoginAnswer = await inquirer.prompt([
+                  {
+                    type: 'confirm',
+                    name: 'login_now',
+                    message: 'Login to GitHub now?',
+                    default: true,
+                  },
+                ]);
+                
+                if (ghLoginAnswer.login_now) {
+                  const ghLoginSpinner = ora('Opening browser for GitHub login...').start();
+                  const ghLoginSuccess = await runGitHubLogin();
+                  
+                  if (ghLoginSuccess) {
+                    ghLoginSpinner.succeed('Logged in to GitHub!');
+                    ghStatus = await checkGitHubCliStatus();
+                    if (ghStatus.authenticated) {
+                      githubReady = true;
+                    }
+                  } else {
+                    ghLoginSpinner.fail('GitHub login failed or was cancelled');
+                    console.log(chalk.yellow('\nYou can login later with: gh auth login\n'));
+                  }
+                }
+              } else {
+                console.log(chalk.green('  ✓ Authenticated with GitHub'));
+                githubReady = true;
+              }
+            } else {
+              checkSpinner.fail('GitHub CLI not found');
+              console.log(chalk.yellow('\n  GitHub CLI was not detected. Make sure to:'));
+              console.log(chalk.yellow('  1. Complete the installation'));
+              console.log(chalk.yellow('  2. Close and reopen your terminal'));
+              console.log(chalk.yellow('  3. Run: ai-phases config --setup\n'));
+              console.log(chalk.yellow('  ⚠️  GitHub features disabled for now.\n'));
+            }
+          } else {
+            // User chose to skip
+            console.log(chalk.yellow('\n  ⚠️  GitHub features disabled. Enable later with: ai-phases config --setup\n'));
           }
-          
-          console.log(chalk.yellow('\n  ⚠️  GitHub features disabled. Enable later with: ai-phases config --setup\n'));
         }
       } else if (process.platform === 'darwin') {
         const hasBrew = await isCommandAvailable('brew');
@@ -541,7 +601,7 @@ export async function runSetupWizard(): Promise<GlobalConfig> {
   }>(automationPrompts);
 
   const config: GlobalConfig = {
-    version: '1.6.3',
+    version: '1.6.4',
     setup_complete: true,
     cursor: {
       enabled: true,
