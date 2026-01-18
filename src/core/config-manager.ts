@@ -601,7 +601,7 @@ export async function runSetupWizard(): Promise<GlobalConfig> {
   }>(automationPrompts);
 
   const config: GlobalConfig = {
-    version: '1.6.4',
+    version: '1.6.5',
     setup_complete: true,
     cursor: {
       enabled: true,
@@ -671,6 +671,68 @@ async function isCommandAvailable(command: string): Promise<boolean> {
 }
 
 /**
+ * Get the path to gh executable, checking common install locations
+ */
+async function getGhPath(): Promise<string | null> {
+  const { exec } = await import('child_process');
+  const { promisify } = await import('util');
+  const execAsync = promisify(exec);
+  const fs = await import('fs');
+  
+  // First try the PATH
+  try {
+    const checkCmd = process.platform === 'win32' ? 'where gh' : 'which gh';
+    const { stdout } = await execAsync(checkCmd, { timeout: 5000 });
+    if (stdout.trim()) {
+      return 'gh'; // Found in PATH
+    }
+  } catch {
+    // Not in PATH, check common locations
+  }
+  
+  // Windows: Check common installation paths
+  if (process.platform === 'win32') {
+    const windowsPaths = [
+      'C:\\Program Files\\GitHub CLI\\gh.exe',
+      'C:\\Program Files (x86)\\GitHub CLI\\gh.exe',
+      `${process.env.LOCALAPPDATA}\\Programs\\GitHub CLI\\gh.exe`,
+      `${process.env.USERPROFILE}\\AppData\\Local\\Programs\\GitHub CLI\\gh.exe`,
+      `${process.env.USERPROFILE}\\scoop\\shims\\gh.exe`,
+    ];
+    
+    for (const ghPath of windowsPaths) {
+      try {
+        if (fs.existsSync(ghPath)) {
+          return `"${ghPath}"`; // Quote path for spaces
+        }
+      } catch {
+        // Continue checking
+      }
+    }
+  }
+  
+  // macOS: Check Homebrew paths
+  if (process.platform === 'darwin') {
+    const macPaths = [
+      '/usr/local/bin/gh',
+      '/opt/homebrew/bin/gh',
+    ];
+    
+    for (const ghPath of macPaths) {
+      try {
+        if (fs.existsSync(ghPath)) {
+          return ghPath;
+        }
+      } catch {
+        // Continue checking
+      }
+    }
+  }
+  
+  return null;
+}
+
+/**
  * Check if GitHub CLI (gh) is installed and authenticated
  */
 async function checkGitHubCliStatus(): Promise<GhCliStatus> {
@@ -678,16 +740,22 @@ async function checkGitHubCliStatus(): Promise<GhCliStatus> {
   const { promisify } = await import('util');
   const execAsync = promisify(exec);
   
+  const ghPath = await getGhPath();
+  
+  if (!ghPath) {
+    return { installed: false, authenticated: false };
+  }
+  
   try {
-    // Check if gh is installed
-    await execAsync('gh --version', { timeout: 5000 });
+    // Check if gh works
+    await execAsync(`${ghPath} --version`, { timeout: 5000 });
   } catch {
     return { installed: false, authenticated: false };
   }
   
   try {
     // Check if authenticated
-    await execAsync('gh auth status', { timeout: 5000 });
+    await execAsync(`${ghPath} auth status`, { timeout: 5000 });
     return { installed: true, authenticated: true };
   } catch {
     return { installed: true, authenticated: false };
@@ -700,10 +768,17 @@ async function checkGitHubCliStatus(): Promise<GhCliStatus> {
 async function runGitHubLogin(): Promise<boolean> {
   const { spawn } = await import('child_process');
   
+  const ghPath = await getGhPath();
+  if (!ghPath) {
+    return false;
+  }
+  
   return new Promise((resolve) => {
     // gh auth login with web browser flow
-    const child = spawn('gh', ['auth', 'login', '--web', '-h', 'github.com'], {
+    // Use shell: true to handle quoted paths on Windows
+    const child = spawn(ghPath, ['auth', 'login', '--web', '-h', 'github.com'], {
       stdio: 'inherit', // Show login process to user
+      shell: true,
     });
     
     child.on('close', (code) => {
