@@ -233,7 +233,7 @@ export async function runSetupWizard(): Promise<GlobalConfig> {
   console.log(chalk.yellow('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
   console.log(chalk.yellow('  GitHub CLI Setup (for auto repo creation)\n'));
   
-  const ghStatus = await checkGitHubCliStatus();
+  let ghStatus = await checkGitHubCliStatus();
   
   if (!ghStatus.installed) {
     console.log(chalk.red('  ✗ GitHub CLI (gh) not found\n'));
@@ -246,15 +246,55 @@ export async function runSetupWizard(): Promise<GlobalConfig> {
       console.log(chalk.cyan('    sudo apt install gh'));
     }
     console.log(chalk.dim('\n  Or download from: ') + chalk.cyan('https://cli.github.com/'));
-    console.log(chalk.dim('\n  Then authenticate with: ') + chalk.cyan('gh auth login'));
     console.log(chalk.yellow('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
-    console.log(chalk.yellow('  ⚠️  Auto repo creation will be disabled without GitHub CLI.\n'));
+    
+    const ghInstallAnswer = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'continue_anyway',
+        message: 'Continue setup anyway? (auto repo creation will be disabled)',
+        default: false,
+      },
+    ]);
+    
+    if (!ghInstallAnswer.continue_anyway) {
+      console.log(chalk.dim('\nSetup cancelled. Install GitHub CLI first, then run:'));
+      console.log(chalk.cyan('  ai-phases config --setup\n'));
+      process.exit(1);
+    }
+    console.log(chalk.yellow('\n  ⚠️  Auto repo creation will be disabled without GitHub CLI.\n'));
   } else if (!ghStatus.authenticated) {
     console.log(chalk.green('  ✓ GitHub CLI (gh) installed'));
     console.log(chalk.yellow('  ✗ Not authenticated\n'));
-    console.log(chalk.white('  Authenticate with:'));
-    console.log(chalk.cyan('    gh auth login\n'));
+    console.log(chalk.white('  You need to authenticate with GitHub.'));
+    console.log(chalk.dim('  This will open your browser to sign in.\n'));
     console.log(chalk.yellow('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
+    
+    const ghLoginAnswer = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'login_now',
+        message: 'Login to GitHub now?',
+        default: true,
+      },
+    ]);
+    
+    if (ghLoginAnswer.login_now) {
+      const ghLoginSpinner = ora('Opening browser for GitHub login...').start();
+      const ghLoginSuccess = await runGitHubLogin();
+      
+      if (ghLoginSuccess) {
+        ghLoginSpinner.succeed('Logged in to GitHub!');
+        ghStatus = await checkGitHubCliStatus(); // Re-check status
+      } else {
+        ghLoginSpinner.fail('GitHub login failed or was cancelled');
+        console.log(chalk.yellow('\nYou can login later with: gh auth login'));
+        console.log(chalk.yellow('Auto repo creation will be disabled until authenticated.\n'));
+      }
+    } else {
+      console.log(chalk.yellow('\nLogin later with: gh auth login'));
+      console.log(chalk.yellow('Auto repo creation will be disabled until authenticated.\n'));
+    }
   } else {
     console.log(chalk.green('  ✓ GitHub CLI (gh) installed'));
     console.log(chalk.green('  ✓ Authenticated with GitHub'));
@@ -419,6 +459,34 @@ async function checkGitHubCliStatus(): Promise<GhCliStatus> {
   } catch {
     return { installed: true, authenticated: false };
   }
+}
+
+/**
+ * Run gh auth login (opens browser)
+ */
+async function runGitHubLogin(): Promise<boolean> {
+  const { spawn } = await import('child_process');
+  
+  return new Promise((resolve) => {
+    // gh auth login with web browser flow
+    const child = spawn('gh', ['auth', 'login', '--web', '-h', 'github.com'], {
+      stdio: 'inherit', // Show login process to user
+    });
+    
+    child.on('close', (code) => {
+      resolve(code === 0);
+    });
+    
+    child.on('error', () => {
+      resolve(false);
+    });
+    
+    // Timeout after 3 minutes
+    setTimeout(() => {
+      child.kill();
+      resolve(false);
+    }, 180000);
+  });
 }
 
 function getCursorAgentVersionCmd(): string {

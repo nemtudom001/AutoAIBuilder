@@ -36,7 +36,7 @@ npm install -g ai-phase-builder
 
 ### Step 2: Install GitHub CLI
 
-GitHub CLI is required for automatic repository creation.
+GitHub CLI is required for automatic repository creation. The setup wizard will prompt you to authenticate.
 
 <details>
 <summary><strong>🪟 Windows</strong></summary>
@@ -48,11 +48,6 @@ winget install --id GitHub.cli
 # Or download from: https://cli.github.com/
 ```
 
-After installation, authenticate:
-```powershell
-gh auth login
-```
-
 </details>
 
 <details>
@@ -61,9 +56,6 @@ gh auth login
 ```bash
 # Using Homebrew
 brew install gh
-
-# Authenticate
-gh auth login
 ```
 
 </details>
@@ -77,12 +69,11 @@ sudo apt install gh
 
 # Or using conda
 conda install gh --channel conda-forge
-
-# Authenticate
-gh auth login
 ```
 
 </details>
+
+> **Note:** You don't need to run `gh auth login` manually - the setup wizard will prompt you to authenticate.
 
 ### Step 3: Install Cursor CLI
 
@@ -127,14 +118,6 @@ source ~/.bashrc
 cursor-agent --version
 ```
 
-#### 2c. Login to Cursor
-
-```bash
-cursor-agent login
-```
-
-This opens your browser - sign in with your Cursor account.
-
 #### ✅ Done! 
 
 You can now use `ai-phases` from any Windows terminal (CMD, PowerShell, or Git Bash). The tool automatically routes commands through WSL.
@@ -156,9 +139,6 @@ source ~/.zshrc
 
 # Verify installation
 cursor-agent --version
-
-# Login to Cursor
-cursor-agent login
 ```
 
 </details>
@@ -178,12 +158,11 @@ source ~/.bashrc
 
 # Verify installation
 cursor-agent --version
-
-# Login to Cursor
-cursor-agent login
 ```
 
 </details>
+
+> **Note:** You don't need to run `cursor-agent login` manually - the setup wizard will prompt you to authenticate.
 
 ### Step 4: Create Your First Project
 
@@ -195,11 +174,13 @@ mkdir my-project && cd my-project
 ai-phases init
 ```
 
-On first run, `init` will automatically:
-- Verify your Cursor CLI installation
-- Check GitHub CLI authentication
-- Configure your preferences (UI library, design system)
-- Set up automation options (auto-run, auto-commit, auto-push)
+On first run, `init` will automatically run the setup wizard which:
+- Verifies Cursor CLI installation → **prompts to login if needed**
+- Verifies GitHub CLI installation → **prompts to authenticate if needed**
+- Configures your preferences (UI library, design system)
+- Sets up automation options (auto-run, auto-commit, auto-push)
+
+All authentication happens during setup, before any AI generation starts!
 
 ---
 
