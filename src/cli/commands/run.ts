@@ -409,6 +409,11 @@ async function handlePhaseCompleted(
     // Load phase to get validation commands
     const phase = await loadPhaseState(phaseNumber);
     
+    if (!phase) {
+      spinner.fail('Could not load phase state');
+      return { success: false, needsRetry: false, errorContext: 'Phase state not found' };
+    }
+    
     // Get modified files from git (more reliable than parsing output)
     const gitStatus = await getGitStatus();
     
@@ -425,7 +430,7 @@ async function handlePhaseCompleted(
     // === SELF-REVIEW BEFORE VALIDATION ===
     // AI reviews its own work to catch obvious mistakes before running validation
     spinner.text = 'Running AI self-review...';
-    const selfReviewResult = await performSelfReview(phase!, filesModified, result.output);
+    const selfReviewResult = await performSelfReview(phase, filesModified, result.output);
     await saveSelfReviewResults(phaseNumber, attemptNumber, selfReviewResult);
     
     if (!selfReviewResult.passed) {
@@ -447,13 +452,13 @@ async function handlePhaseCompleted(
     await createCheckpoint(
       phaseNumber,
       attemptNumber,
-      phase?.tasks.length || 0,
+      phase.tasks.length,
       'Pre-validation checkpoint',
       filesModified
     );
     
     // Run validation commands if any exist
-    if (phase?.validation_commands && phase.validation_commands.length > 0) {
+    if (phase.validation_commands && phase.validation_commands.length > 0) {
       spinner.text = 'Running validation checks...';
       let validationResult = await runValidationCommands(phase.validation_commands);
       let aiFixAttempts = 0;

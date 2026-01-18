@@ -23,7 +23,7 @@ interface InitOptions {
   yes?: boolean; // Non-interactive mode
 }
 
-const CURRENT_CONFIG_VERSION = '1.8.0';
+const CURRENT_CONFIG_VERSION = '1.8.1';
 
 function isConfigOutdated(version: string | undefined): boolean {
   if (!version) return true;
