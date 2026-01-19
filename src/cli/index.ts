@@ -18,7 +18,7 @@ const program = new Command();
 program
   .name('ai-phases')
   .description('AI-powered project phase orchestration for Cursor IDE')
-  .version('1.1.0');
+  .version('1.9.0');
 
 // Check for first-run setup
 const isFirstRun = await ensureGlobalConfig();
