@@ -91,7 +91,7 @@ export async function saveProjectConfig(config: ProjectConfig): Promise<void> {
 
 export function getDefaultGlobalConfig(): GlobalConfig {
   return {
-    version: '1.9.0',
+    version: '1.9.1',
     setup_complete: false,
     cursor: {
       enabled: true,
