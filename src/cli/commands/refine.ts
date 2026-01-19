@@ -3,6 +3,7 @@ import path from 'path';
 import chalk from 'chalk';
 import ora from 'ora';
 import boxen from 'boxen';
+import inquirer from 'inquirer';
 import { loadGlobalConfig, loadProjectConfig, getProjectPhasesDir } from '../../core/config-manager.js';
 import {
   loadProjectState,
@@ -14,6 +15,8 @@ import {
 import {
   generateSuperpromptEnhancement,
   generatePhaseStructuring,
+  generateComplexityAnalysis,
+  parseComplexityAnalysis,
   buildCursorPrompt,
   savePromptToFile,
 } from '../../core/prompt-builder.js';
@@ -145,6 +148,152 @@ export async function refineCommand(idea: string, options: RefineOptions): Promi
   }
   
   // ═══════════════════════════════════════════════════════════════════════════
+  // Stage 1.5: Complexity Analysis & Phase Count Selection
+  // ═══════════════════════════════════════════════════════════════════════════
+  console.log(chalk.magenta('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
+  console.log(chalk.magenta.bold('  📊 STAGE 1.5: Complexity Analysis'));
+  console.log(chalk.magenta('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
+
+  console.log(chalk.dim('Analyzing project complexity to recommend phase count...\n'));
+
+  const complexityPrompt = generateComplexityAnalysis(enhancedSpec, globalConfig);
+  const complexityPromptPath = await savePromptToFile(complexityPrompt);
+  console.log(chalk.dim('Prompt saved: ') + chalk.white(complexityPromptPath));
+  
+  const spinnerComplexity = ora({
+    text: 'Analyzing complexity...',
+    spinner: 'dots12',
+  }).start();
+
+  const startTimeComplexity = Date.now();
+  const complexityResult = await runPlanningTask(buildCursorPrompt(complexityPrompt));
+  const elapsedComplexity = Math.round((Date.now() - startTimeComplexity) / 1000);
+  
+  let complexityAnalysis: ReturnType<typeof parseComplexityAnalysis> = null;
+  let recommendedPhases = 6; // Default fallback
+  let complexityLevel: 'low' | 'medium' | 'high' = 'medium';
+
+  if (complexityResult.success && complexityResult.output) {
+    complexityAnalysis = parseComplexityAnalysis(complexityResult.output);
+    
+    if (complexityAnalysis) {
+      recommendedPhases = complexityAnalysis.recommended_phases;
+      complexityLevel = complexityAnalysis.complexity_level;
+      spinnerComplexity.succeed(`Complexity analysis complete in ${elapsedComplexity}s`);
+      
+      // Display analysis results
+      console.log(chalk.white('\n┌─────────────────────────────────────────────────────────────┐'));
+      console.log(chalk.white('│') + chalk.bold.cyan('  Project Complexity Analysis') + '                                ' + chalk.white('│'));
+      console.log(chalk.white('├─────────────────────────────────────────────────────────────┤'));
+      console.log(chalk.white('│') + '                                                             ' + chalk.white('│'));
+      console.log(chalk.white('│  ') + chalk.dim('Features detected:    ') + chalk.white(String(complexityAnalysis.features.length).padEnd(35)) + chalk.white('│'));
+      complexityAnalysis.features.slice(0, 5).forEach(f => {
+        const truncatedFeature = f.length > 45 ? f.substring(0, 42) + '...' : f;
+        console.log(chalk.white('│    ') + chalk.cyan('• ') + chalk.dim(truncatedFeature.padEnd(51)) + chalk.white('│'));
+      });
+      if (complexityAnalysis.features.length > 5) {
+        console.log(chalk.white('│    ') + chalk.dim(`... and ${complexityAnalysis.features.length - 5} more`.padEnd(53)) + chalk.white('│'));
+      }
+      console.log(chalk.white('│') + '                                                             ' + chalk.white('│'));
+      if (complexityAnalysis.integrations.length > 0) {
+        const integrationsText = complexityAnalysis.integrations.join(', ');
+        const truncatedIntegrations = integrationsText.length > 30 ? integrationsText.substring(0, 27) + '...' : integrationsText;
+        console.log(chalk.white('│  ') + chalk.dim('Integrations:         ') + chalk.white(truncatedIntegrations.padEnd(35)) + chalk.white('│'));
+      }
+      const complexityColor = complexityLevel === 'high' ? chalk.red : complexityLevel === 'medium' ? chalk.yellow : chalk.green;
+      console.log(chalk.white('│  ') + chalk.dim('Complexity level:     ') + complexityColor(complexityLevel.toUpperCase().padEnd(35)) + chalk.white('│'));
+      console.log(chalk.white('│  ') + chalk.dim('Recommended phases:   ') + chalk.green(String(recommendedPhases).padEnd(35)) + chalk.white('│'));
+      console.log(chalk.white('│') + '                                                             ' + chalk.white('│'));
+      // Wrap reasoning if too long
+      const reasoningLines = complexityAnalysis.reasoning.match(/.{1,55}/g) || [complexityAnalysis.reasoning];
+      reasoningLines.slice(0, 2).forEach(line => {
+        console.log(chalk.white('│  ') + chalk.dim(line.padEnd(57)) + chalk.white('│'));
+      });
+      console.log(chalk.white('│') + '                                                             ' + chalk.white('│'));
+      console.log(chalk.white('└─────────────────────────────────────────────────────────────┘\n'));
+      
+      // Save to state
+      if (state) {
+        state.complexity_analysis = complexityAnalysis;
+        await saveProjectState(state);
+      }
+    } else {
+      spinnerComplexity.warn('Could not parse complexity analysis, using defaults');
+    }
+  } else {
+    spinnerComplexity.warn('Complexity analysis failed, using defaults');
+  }
+
+  // Calculate phase ranges for each option
+  const quickPhases = Math.max(3, recommendedPhases - 2);
+  const detailedPhases = Math.min(15, recommendedPhases + 4);
+
+  // Phase count selection
+  const granularityChoices = [
+    {
+      name: `Quick (${quickPhases} phases) - Faster, broader phases`,
+      value: 'quick',
+      phases: quickPhases,
+    },
+    {
+      name: `Balanced (${recommendedPhases} phases) - Recommended for this project`,
+      value: 'balanced',
+      phases: recommendedPhases,
+    },
+    {
+      name: `Detailed (${detailedPhases} phases) - Fine-grained, methodical`,
+      value: 'detailed',
+      phases: detailedPhases,
+    },
+    {
+      name: 'Custom - Enter your own phase count',
+      value: 'custom',
+      phases: 0,
+    },
+  ];
+
+  const { granularity } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'granularity',
+      message: 'How would you like to split this project into phases?',
+      choices: granularityChoices,
+      default: 'balanced',
+    },
+  ]);
+
+  let targetPhaseCount: number;
+  let selectedGranularity: 'quick' | 'balanced' | 'detailed' | 'custom' = granularity;
+
+  if (granularity === 'custom') {
+    const { customCount } = await inquirer.prompt([
+      {
+        type: 'number',
+        name: 'customCount',
+        message: 'Enter the number of phases (3-20):',
+        default: recommendedPhases,
+        validate: (value: number) => {
+          if (value >= 3 && value <= 20) return true;
+          return 'Please enter a number between 3 and 20';
+        },
+      },
+    ]);
+    targetPhaseCount = customCount;
+  } else {
+    const selected = granularityChoices.find(c => c.value === granularity);
+    targetPhaseCount = selected?.phases || recommendedPhases;
+  }
+
+  console.log(chalk.green(`\n✓ Will create ${targetPhaseCount} phases\n`));
+
+  // Save selection to state
+  if (state) {
+    state.phase_granularity = selectedGranularity;
+    state.target_phase_count = targetPhaseCount;
+    await saveProjectState(state);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // Stage 2: Phase Structuring (Automated)
   // ═══════════════════════════════════════════════════════════════════════════
   console.log(chalk.blue('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
@@ -152,9 +301,10 @@ export async function refineCommand(idea: string, options: RefineOptions): Promi
   console.log(chalk.blue('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
   
   console.log(chalk.dim('Model: ') + chalk.cyan(globalConfig.cursor.planning_model));
-  console.log(chalk.dim('Purpose: Break the spec into executable development phases\n'));
+  console.log(chalk.dim('Purpose: Break the spec into executable development phases'));
+  console.log(chalk.dim('Target: ') + chalk.cyan(`${targetPhaseCount} phases`) + chalk.dim(` (${complexityLevel} complexity)\n`));
   
-  const phasePrompt = generatePhaseStructuring(enhancedSpec, globalConfig);
+  const phasePrompt = generatePhaseStructuring(enhancedSpec, globalConfig, targetPhaseCount, complexityLevel);
   const phasePromptPath = await savePromptToFile(phasePrompt);
   console.log(chalk.dim('Prompt saved: ') + chalk.white(phasePromptPath));
   
@@ -510,6 +660,27 @@ function parsePhasePlan(planContent: string, maxAttempts: number): PhaseState[] 
       ['react', 'typescript'],
       maxAttempts
     ));
+  }
+  
+  // Validate phase quality
+  const qualityIssues: string[] = [];
+  
+  for (const phase of phases) {
+    if (phase.tasks.length < 2) {
+      qualityIssues.push(`Phase ${phase.phase_number} "${phase.name}" has only ${phase.tasks.length} task(s) - should have at least 2`);
+    }
+    if (phase.validation_criteria.length < 2) {
+      qualityIssues.push(`Phase ${phase.phase_number} "${phase.name}" has only ${phase.validation_criteria.length} validation criteria - should have at least 2`);
+    }
+  }
+  
+  if (qualityIssues.length > 0) {
+    console.log(chalk.yellow('\n⚠️  Phase quality warnings:'));
+    qualityIssues.slice(0, 5).forEach(issue => console.log(chalk.dim(`   • ${issue}`)));
+    if (qualityIssues.length > 5) {
+      console.log(chalk.dim(`   ... and ${qualityIssues.length - 5} more warnings`));
+    }
+    console.log(chalk.dim('\n   Consider re-running with different granularity if phases seem too thin.\n'));
   }
   
   return phases;

@@ -126,6 +126,96 @@ Be specific and concrete. This will be used to generate development phases.
 }
 
 /**
+ * Stage 1.5: Complexity Analysis
+ * Analyzes the enhanced spec and recommends a phase count
+ */
+export function generateComplexityAnalysis(enhancedSpec: string, config: GlobalConfig): GeneratedPrompt {
+  const prompt = `You are a senior software architect. Analyze this project specification and determine its complexity.
+
+## Project Specification
+${enhancedSpec}
+
+## Your Task
+Analyze the specification and provide a complexity assessment as JSON.
+
+## Analysis Criteria
+1. **Feature Count**: How many distinct features need to be built?
+2. **Integration Points**: External APIs, databases, third-party services
+3. **Complexity Factors**: Real-time requirements, complex state management, authentication, etc.
+4. **Technical Depth**: Simple CRUD vs. complex algorithms/logic
+
+## Output Format
+**CRITICAL: Output ONLY valid JSON, no markdown, no explanation, no code blocks.**
+
+{
+  "features": ["feature1", "feature2", ...],
+  "integrations": ["api1", "service2", ...],
+  "complexity_factors": ["factor1", "factor2", ...],
+  "complexity_level": "low|medium|high",
+  "recommended_phases": <number between 3 and 15>,
+  "reasoning": "Brief 1-2 sentence explanation"
+}
+
+## Phase Count Guidelines
+- **Low complexity** (simple app, 1-3 features, no integrations): 3-5 phases
+- **Medium complexity** (moderate app, 3-6 features, 1-2 integrations): 5-8 phases
+- **High complexity** (complex app, 6+ features, multiple integrations): 8-15 phases
+
+Base your recommendation on what would result in focused, manageable phases of ~4-8 hours each.`;
+
+  return {
+    model: 'planning',
+    modelName: config.cursor.planning_model,
+    stage: 'Complexity Analysis',
+    prompt,
+  };
+}
+
+/**
+ * Parse the JSON response from complexity analysis
+ */
+export function parseComplexityAnalysis(response: string): {
+  features: string[];
+  integrations: string[];
+  complexity_factors: string[];
+  complexity_level: 'low' | 'medium' | 'high';
+  recommended_phases: number;
+  reasoning: string;
+} | null {
+  try {
+    // Try to extract JSON from the response (in case there's extra text)
+    const jsonMatch = response.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return null;
+    
+    const parsed = JSON.parse(jsonMatch[0]);
+    
+    // Validate required fields
+    if (!parsed.features || !parsed.complexity_level || !parsed.recommended_phases) {
+      return null;
+    }
+    
+    // Clamp recommended phases to valid range
+    parsed.recommended_phases = Math.max(3, Math.min(15, parsed.recommended_phases));
+    
+    // Validate complexity_level
+    if (!['low', 'medium', 'high'].includes(parsed.complexity_level)) {
+      parsed.complexity_level = 'medium';
+    }
+    
+    return {
+      features: parsed.features || [],
+      integrations: parsed.integrations || [],
+      complexity_factors: parsed.complexity_factors || [],
+      complexity_level: parsed.complexity_level,
+      recommended_phases: parsed.recommended_phases,
+      reasoning: parsed.reasoning || '',
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Extract libraries/frameworks that should be looked up via Context7
  */
 function extractLibrariesToLookup(idea: string, config: GlobalConfig): string[] {
@@ -211,7 +301,21 @@ function extractExplicitFeatures(idea: string): string[] {
  * Stage 2: Phase Structuring
  * Takes the enhanced spec and breaks it into executable phases
  */
-export function generatePhaseStructuring(enhancedSpec: string, config: GlobalConfig): GeneratedPrompt {
+export function generatePhaseStructuring(
+  enhancedSpec: string, 
+  config: GlobalConfig,
+  targetPhaseCount: number = 6,
+  complexityLevel: 'low' | 'medium' | 'high' = 'medium'
+): GeneratedPrompt {
+  // Generate phase grouping text for larger phase counts
+  const phaseGroupingText = targetPhaseCount > 8 ? `
+## Phase Grouping (recommended for ${targetPhaseCount} phases)
+Group phases into milestones in your output:
+- **Foundation** (Phases 1-2): Setup, core infrastructure
+- **Core Features** (Phases 3-${Math.floor(targetPhaseCount * 0.6)}): Main functionality
+- **Enhancement & Polish** (Phases ${Math.floor(targetPhaseCount * 0.6) + 1}-${targetPhaseCount}): Advanced features, testing, polish
+` : '';
+
   const prompt = `You are a senior software architect. Take this project specification and break it into development phases.
 
 ## Project Specification
@@ -248,14 +352,21 @@ Validation criteria must be VERIFIABLE, not subjective:
 ${getUILibraryRequirements(config.defaults.ui_library)}
 
 ## Rules
+- **Create exactly ${targetPhaseCount} phases** (±1 is acceptable if it makes logical sense)
 - Phase 1 MUST include UI library setup (shadcn/ui init if using shadcn)
 - Phase 1 should always be project foundation/setup
 - Keep phases focused (4-8 hours of work each)
 - Earlier phases should not depend on later phases
-- Include a final phase for polish and testing
-- Maximum 10 phases for any project
+- Final phase should focus on polish, testing, and integration verification
 - EVERY feature in the spec must appear in at least one phase's tasks
 - ALL UI components must use the specified UI library - no exceptions
+
+## Phase Quality Requirements (${complexityLevel} complexity project)
+- Each phase MUST have at least 3 substantive tasks (not trivial one-liners)
+- Each phase MUST have at least 2 testable validation criteria
+- No duplicate or near-duplicate tasks across phases
+- Each phase should have at least one validation command
+${phaseGroupingText}
 
 ## Output Format
 **CRITICAL INSTRUCTIONS - READ CAREFULLY:**

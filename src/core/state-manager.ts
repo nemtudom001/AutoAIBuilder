@@ -108,6 +108,15 @@ export interface AttemptState {
   };
 }
 
+export interface ComplexityAnalysis {
+  features: string[];
+  integrations: string[];
+  complexity_factors: string[];
+  complexity_level: 'low' | 'medium' | 'high';
+  recommended_phases: number;
+  reasoning: string;
+}
+
 export interface ProjectState {
   project_name: string;
   created_at: string;
@@ -121,6 +130,10 @@ export interface ProjectState {
   research_findings?: string;
   design_tokens?: Record<string, string>;
   git_base_commit?: string;
+  // Phase granularity settings
+  complexity_analysis?: ComplexityAnalysis;
+  phase_granularity?: 'quick' | 'balanced' | 'detailed' | 'custom';
+  target_phase_count?: number;
 }
 
 export async function loadProjectState(): Promise<ProjectState | null> {
